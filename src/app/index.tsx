@@ -190,7 +190,7 @@ export default function HomeScreen() {
                 </View>
                 <Text style={styles.stepTitle}>Differential Diagnosis</Text>
                 <Text style={styles.stepBody}>
-                  Powered by Google Gemini 2.0 Flash (Free Tier) or Local Engine to identify the root cause boundary violation.
+                  Powered by Google Gemini 3.8 / 2.5 Flash (Free Tier) or Local Engine to identify the root cause boundary violation.
                 </Text>
               </View>
 
@@ -235,7 +235,7 @@ export default function HomeScreen() {
                 <Text style={styles.featureIcon}>✨</Text>
                 <Text style={styles.featureTitle}>Free Google Gemini Live</Text>
                 <Text style={styles.featureBody}>
-                  Connect free Google AI Studio tokens (<Text style={styles.inlineCode}>gemini-2.0-flash</Text>) for fast, live AI diagnosis with zero token billing costs.
+                  Connect free Google AI Studio tokens (<Text style={styles.inlineCode}>gemini-3.8-flash</Text>) for fast, live AI diagnosis with zero token billing costs.
                 </Text>
               </View>
 

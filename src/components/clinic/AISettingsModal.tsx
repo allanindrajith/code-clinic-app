@@ -129,7 +129,7 @@ export function AISettingsModal({ visible, onClose }: AISettingsModalProps) {
             <View style={styles.providerBody}>
               <View style={styles.infoBanner}>
                 <Text style={styles.infoBannerText}>
-                  ✨ Google Gemini 2.0 / 1.5 Flash offers a 100% free tier for developers with high rate limits.
+                  ✨ Google Gemini 3.8 / 2.5 / 1.5 Flash offers a 100% free tier for developers with high rate limits.
                 </Text>
                 <Pressable onPress={openGeminiKeyPage} style={styles.linkRow}>
                   <Text style={styles.linkText}>Get Free Gemini API Key from Google AI Studio →</Text>

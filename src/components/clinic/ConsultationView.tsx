@@ -194,7 +194,7 @@ export function ConsultationView({ onOpenSandbox, onOpenHistory }: ConsultationV
             >
               <Text style={styles.modelSelectorText}>
                 {aiSettings.provider === 'gemini'
-                  ? '✨ Gemini 2.0 Flash ▾'
+                  ? `✨ ${aiSettings.model || 'Gemini 3.8 Flash'} ▾`
                   : (aiSettings.provider === 'openai' ? '🤖 Agent LLM ▾' : '🩺 Local Engine ▾')}
               </Text>
             </Pressable>

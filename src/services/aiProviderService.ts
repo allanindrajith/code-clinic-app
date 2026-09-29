@@ -36,12 +36,16 @@ export class AIProviderService {
     const envGeminiKey = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GEMINI_API_KEY) || '';
     const envOpenAIKey = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_OPENAI_API_KEY) || '';
 
+    if (!savedSettings.model || savedSettings.model.includes('gemini-2.0')) {
+      savedSettings.model = 'gemini-3.8-flash';
+    }
+
     return {
       provider: savedSettings.provider || (envGeminiKey ? 'gemini' : (savedSettings.geminiKey ? 'gemini' : 'local')),
       geminiKey: savedSettings.geminiKey || envGeminiKey,
       openaiKey: savedSettings.openaiKey || envOpenAIKey,
       customEndpoint: savedSettings.customEndpoint || '',
-      model: savedSettings.model || 'gemini-2.0-flash',
+      model: savedSettings.model || 'gemini-3.8-flash',
     };
   }
 
@@ -50,6 +54,9 @@ export class AIProviderService {
   }
 
   public updateSettings(updates: Partial<AISettings>): void {
+    if (updates.model && updates.model.includes('gemini-2.0')) {
+      updates.model = 'gemini-3.8-flash';
+    }
     this.settings = { ...this.settings, ...updates };
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
@@ -79,28 +86,73 @@ export class AIProviderService {
     }
 
     if (prov === 'gemini') {
-      try {
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${testKey.trim()}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: 'Respond with the word: READY' }] }]
-            })
+      const preferred = (this.settings.model && !this.settings.model.includes('gemini-2.0'))
+        ? this.settings.model
+        : 'gemini-3.8-flash';
+
+      const candidateModels = Array.from(new Set([
+        preferred,
+        'gemini-3.8-flash',
+        'gemini-2.5-flash',
+        'gemini-1.5-flash',
+        'gemini-1.5-pro'
+      ])).filter(m => !m.includes('gemini-2.0'));
+
+      let lastErrorMsg = '';
+
+      for (const modelCandidate of candidateModels) {
+        try {
+          const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${modelCandidate}:generateContent?key=${testKey.trim()}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: 'Respond with the word: READY' }] }]
+              })
+            }
+          );
+
+          if (res.ok) {
+            this.updateSettings({ model: modelCandidate });
+            return {
+              success: true,
+              message: `Connected to Google Gemini (${modelCandidate}) successfully!`
+            };
           }
-        );
 
-        if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
-          const errMsg = errData?.error?.message || `HTTP ${res.status}`;
-          return { success: false, message: `Gemini API Error: ${errMsg}` };
-        }
+          lastErrorMsg = errData?.error?.message || `HTTP ${res.status}`;
+          const lower = lastErrorMsg.toLowerCase();
 
-        return { success: true, message: 'Connected to Google Gemini (Free Tier) successfully!' };
-      } catch (err: any) {
-        return { success: false, message: `Connection failed: ${err.message || 'Network error'}` };
+          // If model is deprecated or not available, seamlessly try next model candidate
+          if (
+            lower.includes('no longer available') ||
+            lower.includes('not found') ||
+            lower.includes('not supported') ||
+            lower.includes('deprecated') ||
+            lower.includes('please update your code') ||
+            res.status === 404
+          ) {
+            continue;
+          }
+
+          // Helpful hint for invalid API key format
+          if (lower.includes('api key not valid') || lower.includes('invalid api key')) {
+            return {
+              success: false,
+              message: `Gemini API Error: Invalid API key. (Free Gemini API keys from Google AI Studio usually begin with 'AIzaSy...').`
+            };
+          }
+
+          // Return specific auth, quota, or permission error
+          return { success: false, message: `Gemini API Error: ${lastErrorMsg}` };
+        } catch (err: any) {
+          lastErrorMsg = err.message || 'Network error';
+        }
       }
+
+      return { success: false, message: `Gemini API Error: ${lastErrorMsg}` };
     }
 
     if (prov === 'openai') {
@@ -182,8 +234,17 @@ export class AIProviderService {
     actual?: string;
   }): Promise<DiagnosisResult> {
     const key = this.settings.geminiKey.trim();
-    const model = this.settings.model || 'gemini-2.0-flash';
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+    const preferred = (this.settings.model && !this.settings.model.includes('gemini-2.0'))
+      ? this.settings.model
+      : 'gemini-3.8-flash';
+
+    const candidateModels = Array.from(new Set([
+      preferred,
+      'gemini-3.8-flash',
+      'gemini-2.5-flash',
+      'gemini-1.5-flash',
+      'gemini-1.5-pro'
+    ])).filter(m => !m.includes('gemini-2.0'));
 
     const systemPrompt = `You are Dr. Debug, the world's most capable senior physician software engineer at Code Clinic.
 Your job is to diagnose the user's reported bug or error message and give them clear, step-by-step instructions on how to cure it, followed by a surgical before/after code patch.
@@ -213,54 +274,74 @@ Actual Behavior: ${params.actual || 'Runtime crash or unexpected behavior'}
 
 Please diagnose this case as Dr. Debug and output only the valid JSON response.`;
 
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }]
+    let lastError: Error | null = null;
+
+    for (const model of candidateModels) {
+      try {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: 'user',
+                parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }]
+              }
+            ],
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 2048,
+              responseMimeType: 'application/json'
+            }
+          })
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          const errMsg = err?.error?.message || `Gemini status ${res.status}`;
+          const lower = errMsg.toLowerCase();
+          if (
+            lower.includes('no longer available') ||
+            lower.includes('not found') ||
+            lower.includes('not supported') ||
+            lower.includes('deprecated') ||
+            lower.includes('please update your code') ||
+            res.status === 404
+          ) {
+            lastError = new Error(errMsg);
+            continue; // try next candidate model
           }
-        ],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 2048,
-          responseMimeType: 'application/json'
+          throw new Error(errMsg);
         }
-      })
-    });
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err?.error?.message || `Gemini status ${res.status}`);
-    }
+        const data = await res.json();
+        const textOutput = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-    const data = await res.json();
-    const textOutput = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!textOutput) {
+          throw new Error('Empty response received from Gemini');
+        }
 
-    if (!textOutput) {
-      throw new Error('Empty response received from Gemini');
-    }
+        this.updateSettings({ model });
 
-    let parsed: any;
-    try {
-      parsed = JSON.parse(textOutput);
-    } catch {
-      // Regex extraction fallback if model enclosed in markdown ```json
-      const match = textOutput.match(/\{[\s\S]*\}/);
-      if (match) {
-        parsed = JSON.parse(match[0]);
-      } else {
-        throw new Error('Could not parse Gemini JSON output');
-      }
-    }
+        let parsed: any;
+        try {
+          parsed = JSON.parse(textOutput);
+        } catch {
+          // Regex extraction fallback if model enclosed in markdown ```json
+          const match = textOutput.match(/\{[\s\S]*\}/);
+          if (match) {
+            parsed = JSON.parse(match[0]);
+          } else {
+            throw new Error('Could not parse Gemini JSON output');
+          }
+        }
 
-    const instructionsText = Array.isArray(parsed.instructions)
-      ? parsed.instructions.map((step: string, i: number) => `${i + 1}. **${step.replace(/^Step \d+:\s*/i, '')}**`).join('\n')
-      : '1. Review the error location.\n2. Apply the surgical patch below.\n3. Test and verify in the terminal.';
+        const instructionsText = Array.isArray(parsed.instructions)
+          ? parsed.instructions.map((step: string, i: number) => `${i + 1}. **${step.replace(/^Step \d+:\s*/i, '')}**`).join('\n')
+          : '1. Review the error location.\n2. Apply the surgical patch below.\n3. Test and verify in the terminal.';
 
-    const diagnosisMarkdown = `### 🩺 Diagnosis: Powered by Google Gemini ✨
+        const diagnosisMarkdown = `### 🩺 Diagnosis: Powered by Google Gemini (${model}) ✨
 
 **Root Cause Hypothesis:**
 ${parsed.rootCause || 'Identified runtime state boundary violation.'}
@@ -270,27 +351,33 @@ ${parsed.rootCause || 'Identified runtime state boundary violation.'}
 ### 📋 Step-by-Step Instructions to Fix It:
 ${instructionsText}`;
 
-    const searchResults: WebSearchResult[] = parsed.referenceTitle ? [
-      {
-        title: parsed.referenceTitle,
-        url: `https://www.google.com/search?q=${encodeURIComponent(parsed.searchQuery || 'developer docs')}`,
-        snippet: parsed.referenceSnippet || 'Official framework documentation pattern.'
-      }
-    ] : [];
+        const searchResults: WebSearchResult[] = parsed.referenceTitle ? [
+          {
+            title: parsed.referenceTitle,
+            url: `https://www.google.com/search?q=${encodeURIComponent(parsed.searchQuery || 'developer docs')}`,
+            snippet: parsed.referenceSnippet || 'Official framework documentation pattern.'
+          }
+        ] : [];
 
-    return {
-      sessionId: params.sessionId,
-      phase: 'diagnosis',
-      clarifyingQuestion: null,
-      diagnosis: diagnosisMarkdown,
-      patchCode: parsed.patchCode || '// Surgical patch ready in editor',
-      prevention: parsed.prevention || 'Validate external inputs and apply strict TypeScript checking.',
-      didSearch: true,
-      searchQuery: parsed.searchQuery || 'Gemini verified diagnosis',
-      searchResults,
-      matchedCaseId: 'gemini-live',
-      confidence: 0.99
-    };
+        return {
+          sessionId: params.sessionId,
+          phase: 'diagnosis',
+          clarifyingQuestion: null,
+          diagnosis: diagnosisMarkdown,
+          patchCode: parsed.patchCode || '// Surgical patch ready in editor',
+          prevention: parsed.prevention || 'Validate external inputs and apply strict TypeScript checking.',
+          didSearch: true,
+          searchQuery: parsed.searchQuery || 'Gemini verified diagnosis',
+          searchResults,
+          matchedCaseId: 'gemini-live',
+          confidence: 0.99
+        };
+      } catch (err: any) {
+        lastError = err;
+      }
+    }
+
+    throw lastError || new Error('All Gemini candidate models failed. Please verify your API key or model quota.');
   }
 
   private async callOpenAICompatibleAPI(params: {
