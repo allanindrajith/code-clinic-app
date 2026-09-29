@@ -1,12 +1,13 @@
 {
   "expo": {
-    "name": "allan-indrajith",
-    "slug": "allan-indrajith",
+    "name": "Code Clinic — AI Debugging Doctor",
+    "slug": "codeclinic",
+    "description": "Code Clinic — AI Debugging Doctor and Diagnostic System with Dr. Debug, Code ICU, and Clinical Memory",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "allanindrajith",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "ios": {
       "icon": "./assets/expo.icon"
     },
@@ -28,7 +29,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#FFFFFF",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
@@ -37,6 +38,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "f879131d-417c-4983-b05c-216ac01897c5"
+      }
+    },
+    "owner": "allanindrajith"
   }
 }
