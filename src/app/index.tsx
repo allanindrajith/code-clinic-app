@@ -615,7 +615,7 @@ const styles = StyleSheet.create({
     backgroundColor: DesignTokens.colors.surfaceCard,
     borderWidth: 1,
     borderColor: DesignTokens.colors.hairlineStrong,
-    borderRadius: DesignTokens.rounded.xl,
+    borderRadius: DesignTokens.rounded.xl, // 16px radius
     padding: Spacing.four + 8,
     alignItems: 'center',
     textAlign: 'center',
