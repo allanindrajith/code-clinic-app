@@ -65,9 +65,18 @@ export default function RootLayout() {
           <Tabs.Screen
             name="index"
             options={{
-              title: 'Dr. Debug',
+              title: 'Overview',
               tabBarIcon: ({ color, focused }) => (
                 <Text style={{ fontSize: 20 }}>🩺</Text>
+              ),
+            }}
+          />
+          <Tabs.Screen
+            name="chat"
+            options={{
+              title: 'Dr. Debug',
+              tabBarIcon: ({ color, focused }) => (
+                <Text style={{ fontSize: 20 }}>💬</Text>
               ),
             }}
           />

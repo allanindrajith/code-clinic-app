@@ -8,6 +8,11 @@ import {
   LearningRecord,
   TRIAGE_TEMPLATES
 } from '@/services/clinicEngine';
+import {
+  aiProviderService,
+  AISettings,
+  AIProviderType
+} from '@/services/aiProviderService';
 
 export interface ConsultationDraft {
   symptom: string;
@@ -17,8 +22,26 @@ export interface ConsultationDraft {
   actual: string;
 }
 
+export interface ChatSession {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: ConsultationMessage[];
+  patientStatus: 'intake' | 'diagnosing' | 'prescribed' | 'cured';
+  patientFacts: PatientFacts;
+  latestDiagnosis: DiagnosisResult | null;
+  draft: ConsultationDraft;
+}
+
 interface ClinicContextType {
   sessionId: string;
+  currentSessionId: string;
+  sessions: ChatSession[];
+  switchSession: (id: string) => void;
+  newSession: (initialTitle?: string) => string;
+  deleteSession: (id: string) => void;
+  renameSession: (id: string, newTitle: string) => void;
   patientStatus: 'intake' | 'diagnosing' | 'prescribed' | 'cured';
   messages: ConsultationMessage[];
   patientFacts: PatientFacts;
@@ -41,9 +64,14 @@ interface ClinicContextType {
   sandboxOutput: string;
   sandboxStatus: 'Ready' | 'Running' | 'Success' | 'Error';
   runSandbox: (codeToRun?: string, langToRun?: 'javascript' | 'python') => void;
+  aiSettings: AISettings;
+  updateAISettings: (updates: Partial<AISettings>) => void;
+  testAIConnection: (provider?: AIProviderType, key?: string) => Promise<{ success: boolean; message: string }>;
 }
 
 const ClinicContext = createContext<ClinicContextType | null>(null);
+
+const SESSIONS_STORAGE_KEY = 'code_clinic_sessions_v2';
 
 const DEFAULT_SANDBOX_CODE = `// Code Clinic ICU Sandbox
 // Execute surgical patches or test bug hypotheses safely:
@@ -58,39 +86,93 @@ console.log("Registered User:", checkUserAccess({ role: 'admin', permissions: ['
 console.log("Uninitialized User:", checkUserAccess(null));
 `;
 
+function createNewSessionData(id?: string, initialTitle?: string): ChatSession {
+  const sessionId = id || `CC-${Math.floor(1000 + Math.random() * 9000)}`;
+  const now = Date.now();
+  return {
+    id: sessionId,
+    title: initialTitle || 'New Consultation',
+    createdAt: now,
+    updatedAt: now,
+    messages: [
+      {
+        id: `welcome-${sessionId}`,
+        role: 'assistant',
+        content: `🩺 **Dr. Debug on Duty — Patient Chart (${sessionId})**\n\nExamining room is open. Paste your terminal error message, crash trace, or broken code snippet below. I will analyze the root cause and provide clear, step-by-step instructions and surgical fixes to cure it.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }
+    ],
+    patientStatus: 'intake',
+    patientFacts: {
+      language: null,
+      framework: null,
+      os: 'Cross-platform / Web',
+      versions: {},
+      errorSignature: null,
+      diagnosedBugs: [],
+      resolvedCount: 0
+    },
+    latestDiagnosis: null,
+    draft: {
+      symptom: '',
+      code: '',
+      error: '',
+      expected: '',
+      actual: ''
+    }
+  };
+}
+
+function loadSavedSessions(): ChatSession[] {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      const raw = window.localStorage.getItem(SESSIONS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // Ignore parse error
+    }
+  }
+  return [createNewSessionData()];
+}
+
+function persistSessions(sessions: ChatSession[]) {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      window.localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(sessions));
+    } catch {
+      // Ignore storage error
+    }
+  }
+}
+
 export function ClinicProvider({ children }: { children: React.ReactNode }) {
-  const [sessionId, setSessionId] = useState<string>(() => `CC-${Math.floor(1000 + Math.random() * 9000)}`);
-  const [patientStatus, setPatientStatus] = useState<'intake' | 'diagnosing' | 'prescribed' | 'cured'>('intake');
+  const [sessions, setSessions] = useState<ChatSession[]>(() => loadSavedSessions());
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
+    const initial = loadSavedSessions();
+    return initial[0]?.id || `CC-${Math.floor(1000 + Math.random() * 9000)}`;
+  });
+
+  const activeSession = useMemo(() => {
+    return sessions.find(s => s.id === currentSessionId) || sessions[0] || createNewSessionData(currentSessionId);
+  }, [sessions, currentSessionId]);
+
   const [activeTriageId, setActiveTriageId] = useState<string | null>(null);
 
-  const [patientFacts, setPatientFacts] = useState<PatientFacts>({
-    language: null,
-    framework: null,
-    os: 'Cross-platform / Web',
-    versions: {},
-    errorSignature: null,
-    diagnosedBugs: [],
-    resolvedCount: 0
-  });
+  const [aiSettings, setAiSettings] = useState<AISettings>(() => aiProviderService.getSettings());
 
-  const [draft, setDraft] = useState<ConsultationDraft>({
-    symptom: '',
-    code: '',
-    error: '',
-    expected: '',
-    actual: ''
-  });
+  const updateAISettings = useCallback((updates: Partial<AISettings>) => {
+    aiProviderService.updateSettings(updates);
+    setAiSettings(aiProviderService.getSettings());
+  }, []);
 
-  const [messages, setMessages] = useState<ConsultationMessage[]>([
-    {
-      id: 'welcome-msg',
-      role: 'assistant',
-      content: `Welcome to the Code Clinic. Tell me what symptoms your program is experiencing. What were you trying to achieve, and what exact error or unexpected behavior occurred?`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }
-  ]);
-
-  const [latestDiagnosis, setLatestDiagnosis] = useState<DiagnosisResult | null>(null);
+  const testAIConnection = useCallback(async (provider?: AIProviderType, key?: string) => {
+    return await aiProviderService.testConnection(provider, key);
+  }, []);
 
   // Sandbox state
   const [sandboxCode, setSandboxCode] = useState<string>(DEFAULT_SANDBOX_CODE);
@@ -98,27 +180,93 @@ export function ClinicProvider({ children }: { children: React.ReactNode }) {
   const [sandboxOutput, setSandboxOutput] = useState<string>('Terminal Ready. Press "Execute Code" to run.');
   const [sandboxStatus, setSandboxStatus] = useState<'Ready' | 'Running' | 'Success' | 'Error'>('Ready');
 
-  const updateDraft = useCallback((updates: Partial<ConsultationDraft>) => {
-    setDraft(prev => ({ ...prev, ...updates }));
+  // Helper to update active session state and persist
+  const updateActiveSession = useCallback((updater: (prev: ChatSession) => ChatSession) => {
+    setSessions(prevSessions => {
+      const idx = prevSessions.findIndex(s => s.id === currentSessionId);
+      if (idx === -1) {
+        const fresh = updater(createNewSessionData(currentSessionId));
+        const updated = [fresh, ...prevSessions];
+        persistSessions(updated);
+        return updated;
+      }
+      const updatedSession = updater(prevSessions[idx]);
+      const nextSessions = [...prevSessions];
+      nextSessions[idx] = updatedSession;
+      persistSessions(nextSessions);
+      return nextSessions;
+    });
+  }, [currentSessionId]);
+
+  const switchSession = useCallback((id: string) => {
+    const target = sessions.find(s => s.id === id);
+    if (target) {
+      setCurrentSessionId(id);
+      if (target.latestDiagnosis?.patchCode) {
+        setSandboxCode(target.latestDiagnosis.patchCode);
+      }
+    }
+  }, [sessions]);
+
+  const newSession = useCallback((initialTitle?: string): string => {
+    const fresh = createNewSessionData(undefined, initialTitle);
+    setSessions(prev => {
+      const updated = [fresh, ...prev];
+      persistSessions(updated);
+      return updated;
+    });
+    setCurrentSessionId(fresh.id);
+    return fresh.id;
   }, []);
 
-  const clearDraft = useCallback(() => {
-    setDraft({
-      symptom: '',
-      code: '',
-      error: '',
-      expected: '',
-      actual: ''
+  const deleteSession = useCallback((id: string) => {
+    setSessions(prev => {
+      const filtered = prev.filter(s => s.id !== id);
+      const remaining = filtered.length > 0 ? filtered : [createNewSessionData()];
+      persistSessions(remaining);
+      if (currentSessionId === id) {
+        setCurrentSessionId(remaining[0].id);
+      }
+      return remaining;
     });
-    setActiveTriageId(null);
+  }, [currentSessionId]);
+
+  const renameSession = useCallback((id: string, newTitle: string) => {
+    setSessions(prev => {
+      const updated = prev.map(s => s.id === id ? { ...s, title: newTitle.trim() || s.title, updatedAt: Date.now() } : s);
+      persistSessions(updated);
+      return updated;
+    });
   }, []);
+
+  const updateDraft = useCallback((updates: Partial<ConsultationDraft>) => {
+    updateActiveSession(prev => ({
+      ...prev,
+      draft: { ...prev.draft, ...updates },
+      updatedAt: Date.now()
+    }));
+  }, [updateActiveSession]);
+
+  const clearDraft = useCallback(() => {
+    updateActiveSession(prev => ({
+      ...prev,
+      draft: {
+        symptom: '',
+        code: '',
+        error: '',
+        expected: '',
+        actual: ''
+      },
+      updatedAt: Date.now()
+    }));
+    setActiveTriageId(null);
+  }, [updateActiveSession]);
 
   const runSandbox = useCallback((codeToRun?: string, langToRun?: 'javascript' | 'python') => {
     const code = codeToRun ?? sandboxCode;
     const lang = langToRun ?? sandboxLanguage;
     setSandboxStatus('Running');
     
-    // Slight tick for visual responsiveness
     setTimeout(() => {
       const res = clinicService.executeSandbox(lang, code);
       if (res.success) {
@@ -144,54 +292,85 @@ export function ClinicProvider({ children }: { children: React.ReactNode }) {
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
+    // Auto-generate title if this is the first user message or session has default title
+    const firstLine = (params.error || params.symptom || 'Consultation').split('\n')[0].replace(/^(Error:\s*|TypeError:\s*)/i, '').trim();
+    const autoTitle = firstLine ? firstLine.slice(0, 36) + (firstLine.length > 36 ? '...' : '') : 'Bug Consultation';
+
     // Extract facts
     const extracted = clinicService.extractFacts(`${params.symptom} ${params.error}`, params.code);
-    setPatientFacts(prev => ({
-      ...prev,
-      ...extracted,
-      versions: { ...prev.versions, ...(extracted.versions || {}) },
-      errorSignature: extracted.errorSignature || params.error || prev.errorSignature
-    }));
 
-    setMessages(prev => [...prev, userMsg]);
-    setPatientStatus('diagnosing');
-
-    // Run diagnosis engine with a smooth diagnostic tick for realistic UX
-    setTimeout(() => {
-      const diagnosis = clinicService.diagnose({
-        sessionId,
-        message: params.symptom,
-        code: params.code,
-        error: params.error,
-        expected: params.expected,
-        actual: params.actual
-      });
-
-      setLatestDiagnosis(diagnosis);
-
-      const doctorMsg: ConsultationMessage = {
-        id: `doc-${Date.now()}`,
-        role: 'assistant',
-        content: diagnosis.diagnosis,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        payload: diagnosis
+    updateActiveSession(prev => {
+      const isDefaultTitle = prev.title === 'New Consultation' || prev.title.startsWith('CC-');
+      return {
+        ...prev,
+        title: isDefaultTitle ? autoTitle : prev.title,
+        messages: [...prev.messages, userMsg],
+        patientStatus: 'diagnosing',
+        patientFacts: {
+          ...prev.patientFacts,
+          ...extracted,
+          versions: { ...prev.patientFacts.versions, ...(extracted.versions || {}) },
+          errorSignature: extracted.errorSignature || params.error || prev.patientFacts.errorSignature
+        },
+        draft: {
+          symptom: '',
+          code: '',
+          error: '',
+          expected: '',
+          actual: ''
+        },
+        updatedAt: Date.now()
       };
+    });
 
-      setMessages(prev => [...prev, doctorMsg]);
+    const activeId = currentSessionId;
 
-      if (diagnosis.phase === 'intake') {
-        setPatientStatus('intake');
-      } else {
-        setPatientStatus('prescribed');
-        setPatientFacts(prev => ({
-          ...prev,
-          diagnosedBugs: [...prev.diagnosedBugs, diagnosis.searchQuery || 'Clinical Bug Case'],
-          lastDiagnosis: diagnosis.diagnosis,
-          lastTreatment: diagnosis.prevention,
-          lastCodePatch: diagnosis.patchCode
-        }));
+    // Run diagnosis engine with live AI (Gemini / Agent token) or instant local fallback
+    (async () => {
+      try {
+        const diagnosis = await aiProviderService.diagnoseWithAI({
+          sessionId: activeId,
+          message: params.symptom,
+          code: params.code,
+          error: params.error,
+          expected: params.expected,
+          actual: params.actual
+        });
 
-        // If there is a patch code, load it into sandbox for testing
+        const doctorMsg: ConsultationMessage = {
+          id: `doc-${Date.now()}`,
+          role: 'assistant',
+          content: diagnosis.diagnosis,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          payload: diagnosis
+        };
+
+        setSessions(prevSessions => {
+          const idx = prevSessions.findIndex(s => s.id === activeId);
+          if (idx === -1) return prevSessions;
+          const s = prevSessions[idx];
+          const newStatus = diagnosis.phase === 'intake' ? 'intake' : 'prescribed';
+          const updated: ChatSession = {
+            ...s,
+            messages: [...s.messages, doctorMsg],
+            patientStatus: newStatus,
+            latestDiagnosis: diagnosis,
+            patientFacts: {
+              ...s.patientFacts,
+              diagnosedBugs: [...s.patientFacts.diagnosedBugs, diagnosis.searchQuery || 'Clinical Bug Case'],
+              lastDiagnosis: diagnosis.diagnosis,
+              lastTreatment: diagnosis.prevention,
+              lastCodePatch: diagnosis.patchCode
+            },
+            updatedAt: Date.now()
+          };
+          const next = [...prevSessions];
+          next[idx] = updated;
+          persistSessions(next);
+          return next;
+        });
+
+        // Load patch into sandbox
         if (diagnosis.patchCode) {
           setSandboxCode(diagnosis.patchCode);
           if (extracted.language === 'Python') {
@@ -200,13 +379,15 @@ export function ClinicProvider({ children }: { children: React.ReactNode }) {
             setSandboxLanguage('javascript');
           }
         }
+      } catch (err) {
+        console.error('Diagnostic error:', err);
       }
-    }, 280);
-  }, [sessionId]);
+    })();
+  }, [currentSessionId, updateActiveSession]);
 
   const submitConsultation = useCallback((customDraft?: ConsultationDraft) => {
-    submitConsultationWithParams(customDraft || draft);
-  }, [draft, submitConsultationWithParams]);
+    submitConsultationWithParams(customDraft || activeSession.draft);
+  }, [activeSession.draft, submitConsultationWithParams]);
 
   const loadTriageCase = useCallback((templateId: string) => {
     const template = TRIAGE_TEMPLATES.find(t => t.id === templateId);
@@ -221,93 +402,83 @@ export function ClinicProvider({ children }: { children: React.ReactNode }) {
       actual: template.actual
     };
 
-    setDraft(newDraft);
+    updateActiveSession(prev => ({
+      ...prev,
+      title: template.title,
+      draft: newDraft
+    }));
 
     // Auto-diagnose this emergency triage case
     submitConsultationWithParams(newDraft);
-  }, [submitConsultationWithParams]);
+  }, [submitConsultationWithParams, updateActiveSession]);
 
   const answerClarifyingQuestion = useCallback((answer: string) => {
     const updatedDraft = {
-      ...draft,
-      symptom: `${draft.symptom}\n\nClinical Clarification: ${answer}`
+      ...activeSession.draft,
+      symptom: `${activeSession.draft.symptom}\n\nClinical Clarification: ${answer}`
     };
-    setDraft(updatedDraft);
     submitConsultationWithParams(updatedDraft);
-  }, [draft, submitConsultationWithParams]);
+  }, [activeSession.draft, submitConsultationWithParams]);
 
   const recordOutcome = useCallback((solved: boolean) => {
-    if (latestDiagnosis) {
-      clinicService.recordFeedback(latestDiagnosis.matchedCaseId, solved);
+    const latestDiag = activeSession.latestDiagnosis;
+    if (latestDiag) {
+      clinicService.recordFeedback(latestDiag.matchedCaseId, solved);
       if (solved) {
-        setPatientStatus('cured');
-        setPatientFacts(prev => ({
+        updateActiveSession(prev => ({
           ...prev,
-          resolvedCount: prev.resolvedCount + 1
+          patientStatus: 'cured',
+          patientFacts: {
+            ...prev.patientFacts,
+            resolvedCount: prev.patientFacts.resolvedCount + 1
+          },
+          messages: [
+            ...prev.messages,
+            {
+              id: `cure-${Date.now()}`,
+              role: 'assistant',
+              content: `🩺 **Case Resolved & Marked Cured!**\n\nPrescription outcome verified. This clinical cure has been committed to long-term memory with elevated confidence.`,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            }
+          ],
+          updatedAt: Date.now()
         }));
-        setMessages(prev => [
-          ...prev,
-          {
-            id: `cure-${Date.now()}`,
-            role: 'assistant',
-            content: `🩺 **Case Resolved & Marked Cured!**\n\nPrescription outcome verified. This clinical cure has been committed to long-term memory with elevated confidence.`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          }
-        ]);
       } else {
-        setPatientStatus('diagnosing');
-        setMessages(prev => [
+        updateActiveSession(prev => ({
           ...prev,
-          {
-            id: `followup-${Date.now()}`,
-            role: 'assistant',
-            content: `Understood. The primary prescription did not resolve the symptom. Let us investigate secondary causes: what new error or terminal output did you receive when applying the patch?`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          }
-        ]);
+          patientStatus: 'diagnosing',
+          messages: [
+            ...prev.messages,
+            {
+              id: `followup-${Date.now()}`,
+              role: 'assistant',
+              content: `Understood. The primary prescription did not resolve the symptom. Let us investigate secondary causes: what new error or terminal output did you receive when applying the patch?`,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            }
+          ],
+          updatedAt: Date.now()
+        }));
       }
     }
-  }, [latestDiagnosis]);
+  }, [activeSession.latestDiagnosis, updateActiveSession]);
 
   const resetPatient = useCallback(() => {
-    const newId = `CC-${Math.floor(1000 + Math.random() * 9000)}`;
-    setSessionId(newId);
-    setPatientStatus('intake');
-    setActiveTriageId(null);
-    setDraft({
-      symptom: '',
-      code: '',
-      error: '',
-      expected: '',
-      actual: ''
-    });
-    setLatestDiagnosis(null);
-    setPatientFacts({
-      language: null,
-      framework: null,
-      os: 'Cross-platform / Web',
-      versions: {},
-      errorSignature: null,
-      diagnosedBugs: [],
-      resolvedCount: 0
-    });
-    setMessages([
-      {
-        id: `welcome-${newId}`,
-        role: 'assistant',
-        content: `Welcome to Code Clinic examining room. A fresh patient chart (${newId}) has been opened. Describe the symptoms of the broken code or pick an Emergency Room Triage case.`,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }
-    ]);
-  }, []);
+    newSession();
+  }, [newSession]);
 
   const value = useMemo(() => ({
-    sessionId,
-    patientStatus,
-    messages,
-    patientFacts,
-    latestDiagnosis,
-    draft,
+    sessionId: activeSession.id,
+    currentSessionId,
+    sessions,
+    switchSession,
+    newSession,
+    deleteSession,
+    renameSession,
+    patientStatus: activeSession.patientStatus,
+    messages: activeSession.messages,
+    patientFacts: activeSession.patientFacts,
+    latestDiagnosis: activeSession.latestDiagnosis,
+    draft: activeSession.draft,
     updateDraft,
     clearDraft,
     loadTriageCase,
@@ -324,14 +495,18 @@ export function ClinicProvider({ children }: { children: React.ReactNode }) {
     setSandboxLanguage,
     sandboxOutput,
     sandboxStatus,
-    runSandbox
+    runSandbox,
+    aiSettings,
+    updateAISettings,
+    testAIConnection
   }), [
-    sessionId,
-    patientStatus,
-    messages,
-    patientFacts,
-    latestDiagnosis,
-    draft,
+    activeSession,
+    currentSessionId,
+    sessions,
+    switchSession,
+    newSession,
+    deleteSession,
+    renameSession,
     updateDraft,
     clearDraft,
     loadTriageCase,
@@ -344,7 +519,10 @@ export function ClinicProvider({ children }: { children: React.ReactNode }) {
     sandboxLanguage,
     sandboxOutput,
     sandboxStatus,
-    runSandbox
+    runSandbox,
+    aiSettings,
+    updateAISettings,
+    testAIConnection
   ]);
 
   return (

@@ -466,57 +466,32 @@ export class ClinicService {
     expected?: string;
     actual?: string;
   }): DiagnosisResult {
-    const combinedQuery = `${message || ''} ${error || ''} ${code || ''} ${expected || ''} ${actual || ''}`.trim();
-    
-    // Intake check: if query is very short and lacks details
-    const hasError = !!(error || /error|fail|crash|warning/i.test(combinedQuery));
-    const hasCode = !!(code || /\{|\(|def\s|function|import/i.test(combinedQuery));
-
-    if (!hasError && !hasCode && message.trim().length < 30) {
-      return {
-        sessionId,
-        phase: 'intake',
-        clarifyingQuestion: "Could you paste the exact error message or stack trace from your terminal or console?",
-        diagnosis: `**Dr. Debug Intake Assessment:**\n\nI hear your symptom: *"${message.trim()}"*.\n\nTo give you a surgical diagnosis rather than guessing blindly, I need one critical clinical observation:`,
-        patchCode: '',
-        prevention: 'Always inspect the exact error trace before attempting code edits.',
-        didSearch: false,
-        searchQuery: '',
-        searchResults: [],
-        matchedCaseId: null,
-        confidence: 0.5
-      };
-    }
-
-    if (!hasCode && hasError && message.trim().length < 35 && !code) {
-      return {
-        sessionId,
-        phase: 'intake',
-        clarifyingQuestion: "What does the code look like around where this error triggers? Please paste the relevant function or block.",
-        diagnosis: `**Dr. Debug Intake Assessment:**\n\nError signature noted. To prescribe a targeted patch, please paste the relevant code block where the error manifests:`,
-        patchCode: '',
-        prevention: 'Isolating the affected block helps prevent regression in surrounding systems.',
-        didSearch: false,
-        searchQuery: '',
-        searchResults: [],
-        matchedCaseId: null,
-        confidence: 0.6
-      };
-    }
-
-    // Check RAG Memory
-    const matches = this.searchLearningStore(combinedQuery);
-    const topMatch = matches[0];
+    const rawInput = `${message || ''} ${error || ''}`.trim();
+    const combinedQuery = `${rawInput} ${code || ''} ${expected || ''} ${actual || ''}`.trim();
 
     // Check if web search verification is helpful
     const verification = this.performWebVerification(combinedQuery);
 
-    if (topMatch) {
+    // 1. Check RAG Memory for pre-curated hospital cases
+    const matches = this.searchLearningStore(combinedQuery);
+    const topMatch = matches[0];
+
+    if (topMatch && (combinedQuery.toLowerCase().includes(topMatch.signature.toLowerCase().slice(0, 15)) || topMatch.confidence > 0.9)) {
       return {
         sessionId,
         phase: 'diagnosis',
         clarifyingQuestion: null,
-        diagnosis: `### 1. Diagnosis (Root Cause Hypothesis)\n${topMatch.root_cause}\n\n*Why this happens:* ${topMatch.symptom}`,
+        diagnosis: `### 🩺 Diagnosis: ${topMatch.signature}
+
+**Root Cause Hypothesis:**
+${topMatch.root_cause}
+
+---
+
+### 📋 Step-by-Step Instructions to Fix It:
+1. **Locate affected scope:** Review where this operation is called in your code (${topMatch.stack.framework} on ${topMatch.stack.language}).
+2. **Apply the surgical prescription:** Replace the problematic construct with the verified fix shown below.
+3. **Verify resolution:** Test the execution or run in the Code Clinic ICU sandbox to confirm the error no longer triggers.`,
         patchCode: topMatch.code_patch,
         prevention: topMatch.prevention,
         didSearch: verification.didSearch,
@@ -527,36 +502,253 @@ export class ClinicService {
       };
     }
 
-    // Dynamic heuristic diagnosis
     const lower = combinedQuery.toLowerCase();
-    if (lower.includes('null') || lower.includes('undefined') || lower.includes('cannot read properties')) {
+
+    // 2. Specialized Error Diagnostic Patterns with Concrete Step-by-Step Instructions
+
+    // Case A: Module not found / Cannot find module
+    const moduleMatch = combinedQuery.match(/(?:Cannot find module|Can't resolve|Module not found: Can't resolve)\s+['"]([^'"]+)['"]/i)
+      || combinedQuery.match(/ModuleNotFoundError:\s+No module named\s+['"]([^'"]+)['"]/i);
+    if (moduleMatch || lower.includes('cannot find module') || lower.includes("can't resolve")) {
+      const pkg = moduleMatch ? moduleMatch[1] : 'the missing package';
+      const isPython = lower.includes('python') || lower.includes('modulenotfounderror');
+      const installCmd = isPython ? `pip install ${pkg}` : `npm install ${pkg}`;
+
       return {
         sessionId,
         phase: 'diagnosis',
         clarifyingQuestion: null,
-        diagnosis: `### 1. Diagnosis (Root Cause Hypothesis)\nAttempted to access a property on an uninitialized (\`undefined\` or \`null\`) object reference.\n\n*Why this happens:* Asynchronous operations (API calls, state updates) have not completed by the time this code branch executes, leaving the variable empty during the initial execution cycle.`,
-        patchCode: `// Before:\nconst value = data.user.name;\n\n// After (Surgical Treatment):\nconst value = data?.user?.name ?? 'Guest';`,
-        prevention: 'Apply optional chaining (\`?.\`) and nullish coalescing (\`??\`) defaults on external or asynchronous data.',
-        didSearch: verification.didSearch,
-        searchQuery: 'Null / undefined property access',
-        searchResults: verification.results,
+        diagnosis: `### 🩺 Diagnosis: Missing Dependency / Module Not Found
+
+**Root Cause:**
+Your runtime environment attempted to import \`${pkg}\`, but the package is not installed in your project dependencies or the relative file path is broken.
+
+---
+
+### 📋 Step-by-Step Instructions to Fix It:
+1. **Install the package:** Run the installation command in your project root terminal:
+   \`${installCmd}\`
+2. **Verify import statement:** Ensure your import statement spelling matches the package export (e.g. \`import ${pkg.includes('/') ? pkg.split('/').pop() : pkg} from '${pkg}';\`).
+3. **Restart your development bundler:** Clear cache and restart your dev server:
+   \`${isPython ? 'python main.py' : 'npx expo start -c || npm run dev'}\``,
+        patchCode: isPython
+          ? `# Step 1: Install in terminal\n# pip install ${pkg}\n\n# Step 2: Import cleanly in your script\ntry:\n    import ${pkg}\nexcept ImportError:\n    print("Please run: pip install ${pkg}")`
+          : `// Step 1: Install in terminal:\n// ${installCmd}\n\n// Step 2: Import in code:\nimport ${pkg.replace(/[^a-zA-Z0-9]/g, '_')} from '${pkg}';`,
+        prevention: 'Always verify package.json (or requirements.txt) and commit your lockfile (package-lock.json / bun.lockb) to ensure teammates and CI have identical dependencies.',
+        didSearch: true,
+        searchQuery: `npm install ${pkg}`,
+        searchResults: [
+          {
+            title: `npm package: ${pkg}`,
+            url: `https://www.npmjs.com/package/${pkg}`,
+            snippet: `Official npm registry documentation and installation instructions for ${pkg}.`
+          }
+        ],
         matchedCaseId: null,
-        confidence: 0.88
+        confidence: 0.95
       };
     }
+
+    // Case B: Null / Undefined / Cannot read properties
+    const propMatch = combinedQuery.match(/Cannot read propert(?:y|ies) of (undefined|null)\s+\(reading ['"]([^'"]+)['"]\)/i)
+      || combinedQuery.match(/TypeError:\s+([a-zA-Z0-9_]+)\s+is (?:undefined|not a function)/i);
+    if (propMatch || lower.includes('cannot read propert') || lower.includes('undefined is not an object')) {
+      const propName = propMatch ? (propMatch[2] || propMatch[1]) : 'property';
+      return {
+        sessionId,
+        phase: 'diagnosis',
+        clarifyingQuestion: null,
+        diagnosis: `### 🩺 Diagnosis: Uninitialized Reference (TypeError)
+
+**Root Cause:**
+Your code attempted to read \`.${propName}\` on a variable that evaluated to \`undefined\` or \`null\`. This happens when asynchronous data (API fetch, database query, React state) has not yet resolved during the initial component render cycle.
+
+---
+
+### 📋 Step-by-Step Instructions to Fix It:
+1. **Locate the property access:** Search your component for accesses to \`.${propName}\`.
+2. **Add optional chaining (\`?.\`):** Guard the access so JavaScript returns \`undefined\` instead of throwing a fatal error.
+3. **Provide a safe fallback default:** Use nullish coalescing (\`?? []\` or \`?? ''\`) and initialize your state with safe default values (e.g. \`useState([])\` instead of empty \`useState()\`).
+4. **Test loading state:** Ensure a loading skeleton or guard renders while the async request is in flight.`,
+        patchCode: `// Before (Unsafe access throws fatal crash):\nconst list = data.${propName}.map(item => item.title);\n\n// After (Surgical Treatment with Optional Chaining & Default):\nconst list = (data?.${propName} ?? []).map(item => item.title);`,
+        prevention: 'Apply optional chaining (?.) and nullish coalescing (??) whenever referencing nested object paths from network payloads.',
+        didSearch: true,
+        searchQuery: 'TypeError Cannot read properties of undefined',
+        searchResults: [
+          {
+            title: 'MDN Web Docs — Optional Chaining (?.)',
+            url: 'https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Optional_chaining',
+            snippet: 'The optional chaining operator (?.) enables you to read the value of a property located deep within a chain of connected objects without having to check that each reference is valid.'
+          }
+        ],
+        matchedCaseId: 'case-rec-101',
+        confidence: 0.96
+      };
+    }
+
+    // Case C: CORS Policy Error
+    if (lower.includes('cors') || lower.includes('access-control-allow-origin') || lower.includes('blocked by cors policy')) {
+      return {
+        sessionId,
+        phase: 'diagnosis',
+        clarifyingQuestion: null,
+        diagnosis: `### 🩺 Diagnosis: Cross-Origin Resource Sharing (CORS) Violation
+
+**Root Cause:**
+The browser's Same-Origin Policy blocked your frontend from reading the API response because the backend server did not return the \`Access-Control-Allow-Origin\` header matching your client origin.
+
+---
+
+### 📋 Step-by-Step Instructions to Fix It:
+1. **Enable CORS on the server:** In your backend (Express/Node/Next.js/FastAPI), install and register the CORS middleware allowing your frontend domain (or \`*\` during development).
+2. **Handle Preflight OPTIONS requests:** Ensure your backend responds with \`200 OK\` or \`204 No Content\` to preflight HTTP \`OPTIONS\` requests.
+3. **Configure dev proxy:** Alternatively, configure a reverse proxy in your dev environment (e.g. in Next.js \`rewrites\` or Vite \`server.proxy\`) to route requests through the same origin.`,
+        patchCode: `// Express.js Backend Fix:\nconst cors = require('cors');\napp.use(cors({\n  origin: ['http://localhost:3000', 'http://localhost:8081'],\n  methods: ['GET', 'POST', 'PUT', 'DELETE'],\n  credentials: true\n}));\n\n// Next.js 15 next.config.js Proxy Fix:\nmodule.exports = {\n  async rewrites() {\n    return [{ source: '/api/:path*', destination: 'http://backend.local/:path*' }];\n  }\n};`,
+        prevention: 'Always centralize API access through backend route handlers or reverse proxies to eliminate CORS preflight overhead.',
+        didSearch: true,
+        searchQuery: 'CORS header Access-Control-Allow-Origin',
+        searchResults: [
+          {
+            title: 'MDN Web Docs — Cross-Origin Resource Sharing (CORS)',
+            url: 'https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS',
+            snippet: 'CORS is an HTTP-header based mechanism that allows a server to indicate any origins other than its own from which a browser should permit loading resources.'
+          }
+        ],
+        matchedCaseId: null,
+        confidence: 0.94
+      };
+    }
+
+    // Case D: Port already in use / EADDRINUSE
+    const portMatch = combinedQuery.match(/(?:EADDRINUSE|address already in use|port is already in use)[^0-9]*([0-9]{3,5})/i);
+    if (portMatch || lower.includes('eaddrinuse') || lower.includes('already in use')) {
+      const port = portMatch ? portMatch[1] : '3000';
+      return {
+        sessionId,
+        phase: 'diagnosis',
+        clarifyingQuestion: null,
+        diagnosis: `### 🩺 Diagnosis: Port Collision (EADDRINUSE: ${port})
+
+**Root Cause:**
+A background or zombie process (often a previous dev server run) is already bound to port \`${port}\`, preventing the new server instance from binding to the network socket.
+
+---
+
+### 📋 Step-by-Step Instructions to Fix It:
+1. **Find and terminate the occupying process:** Run this terminal command:
+   \`lsof -i :${port} | grep LISTEN | awk '{print $2}' | xargs kill -9\`
+2. **Or start on an alternate port:**
+   \`PORT=${Number(port) + 1} npm run dev\`
+3. **Verify startup:** Re-run your start script to verify the server binds successfully.`,
+        patchCode: `// macOS / Linux terminal command:\nlsof -ti:${port} | xargs kill -9\n\n// Windows PowerShell command:\nGet-Process -Id (Get-NetTCPConnection -LocalPort ${port}).OwningProcess | Stop-Process -Force`,
+        prevention: 'Add a SIGINT / SIGTERM process handler to gracefully close HTTP servers on Ctrl+C.',
+        didSearch: false,
+        searchQuery: `kill port ${port} lsof`,
+        searchResults: [],
+        matchedCaseId: null,
+        confidence: 0.97
+      };
+    }
+
+    // Case E: Unexpected token < in JSON
+    if (lower.includes('unexpected token < in json') || (lower.includes('json.parse') && lower.includes('unexpected token'))) {
+      return {
+        sessionId,
+        phase: 'diagnosis',
+        clarifyingQuestion: null,
+        diagnosis: `### 🩺 Diagnosis: Invalid JSON Payload (HTML Error Returned)
+
+**Root Cause:**
+Your code called \`response.json()\`, but the server returned HTML (beginning with \`<!DOCTYPE html>\` or \`<html>\`) instead of JSON. This typically occurs when an API route throws a 404 Not Found, 500 Server Error, or triggers an authentication redirect.
+
+---
+
+### 📋 Step-by-Step Instructions to Fix It:
+1. **Check response status before parsing:** Guard against non-2xx responses using \`if (!response.ok)\`.
+2. **Inspect raw output:** Log \`await response.text()\` in your catch block to view the server's HTML error message.
+3. **Verify backend route URL:** Ensure endpoint URL is spelled correctly without double slashes (\`//\`) or missing prefix.`,
+        patchCode: `// Before:\nconst res = await fetch('/api/user');\nconst data = await res.json(); // <-- Crashes if status is 404/500\n\n// After (Surgical Treatment):\nconst res = await fetch('/api/user');\nif (!res.ok) {\n  const errText = await res.text();\n  throw new Error(\`Server returned \${res.status}: \${errText.slice(0, 80)}\`);\n}\nconst data = await res.json();`,
+        prevention: 'Always inspect response.ok before attempting to parse response bodies with res.json().',
+        didSearch: false,
+        searchQuery: 'Unexpected token < in JSON',
+        searchResults: [],
+        matchedCaseId: null,
+        confidence: 0.93
+      };
+    }
+
+    // Case F: Hydration Error in Next.js / SSR
+    if (lower.includes('hydration') || lower.includes('initial ui does not match') || lower.includes('hydrating')) {
+      return {
+        sessionId,
+        phase: 'diagnosis',
+        clarifyingQuestion: null,
+        diagnosis: `### 🩺 Diagnosis: React Hydration Mismatch (SSR)
+
+**Root Cause:**
+The HTML markup rendered on the server during initial request generation does not match the DOM tree constructed by the client browser during hydration. Common triggers include using \`window\`, \`localStorage\`, \`new Date()\`, or invalid HTML tag nesting (such as \`<div>\` inside \`<p>\`).
+
+---
+
+### 📋 Step-by-Step Instructions to Fix It:
+1. **Check for browser-only APIs:** If using \`localStorage\` or \`window.innerWidth\`, defer access until after the component mounts.
+2. **Use a mounted state flag:** Guard client-dependent rendering using \`useEffect\`.
+3. **Check HTML tag nesting:** Ensure no block elements (\`<div>\`, \`<p>\`) are placed inside prohibited parent tags.`,
+        patchCode: `// Surgical Treatment: Mount Guard\nimport { useState, useEffect } from 'react';\n\nexport function ClientOnlyComponent() {\n  const [isMounted, setIsMounted] = useState(false);\n\n  useEffect(() => {\n    setIsMounted(true);\n  }, []);\n\n  if (!isMounted) {\n    return <div style={{ minHeight: 24 }} />; // SSR fallback placeholder\n  }\n\n  return <div>{window.location.hostname}</div>;\n}`,
+        prevention: 'Never access browser globals in the top-level render scope of SSR components.',
+        didSearch: true,
+        searchQuery: 'Next.js Hydration mismatch error fix',
+        searchResults: [
+          {
+            title: 'Next.js Docs — Text Content Does Not Match Server-Rendered HTML',
+            url: 'https://nextjs.org/docs/messages/react-hydration-error',
+            snippet: 'Hydration fails when the server-rendered HTML doesn’t match what was rendered during client hydration.'
+          }
+        ],
+        matchedCaseId: null,
+        confidence: 0.92
+      };
+    }
+
+    // Case G: General Stack Trace / Custom Error Parser
+    const errorSignatureMatch = combinedQuery.match(/([A-Za-z]+Error:[^\n]+)/) ||
+      combinedQuery.match(/(Exception in [^\n]+)/) ||
+      combinedQuery.match(/(Traceback [^\n]+)/) ||
+      combinedQuery.match(/([A-Za-z]+Exception:[^\n]+)/);
+
+    const errorSignature = errorSignatureMatch ? errorSignatureMatch[1].trim() : 'Runtime Execution Error';
+
+    // Extract file and line number if present
+    const fileLineMatch = combinedQuery.match(/at\s+([^\n(]+)\s+\(([^)]+):(\d+):(\d+)\)/) ||
+      combinedQuery.match(/at\s+([^:]+):(\d+):(\d+)/) ||
+      combinedQuery.match(/File\s+["']([^"']+)["'],\s+line\s+(\d+)/);
+
+    const fileLocation = fileLineMatch
+      ? `${fileLineMatch[1] || fileLineMatch[2]} (Line ${fileLineMatch[3] || fileLineMatch[2]})`
+      : 'your target file';
 
     return {
       sessionId,
       phase: 'diagnosis',
       clarifyingQuestion: null,
-      diagnosis: `### 1. Diagnosis (Root Cause Hypothesis)\nAnalyzing symptom: *"${message.slice(0, 100)}..."*\n\nThe error stems from an asynchronous state or environment boundary mismatch between caller expectations and the runtime environment.\n\n*Clinical Recommendation:* Verify input types and ensure all promise chains are properly awaited or wrapped with defensive guards.`,
-      patchCode: `// Prescribed Surgical Patch:\ntry {\n  // Wrap sensitive execution\n  ${code ? code.split('\n')[0] : '// ... affected operation'}\n} catch (err) {\n  console.error("Clinical caught error:", err);\n}`,
-      prevention: 'Add explicit error boundaries and integration test suites.',
+      diagnosis: `### 🩺 Diagnosis: ${errorSignature}
+
+**Root Cause Hypothesis:**
+An unhandled exception was raised in **${fileLocation}**. The runtime encountered unexpected state or invalid arguments during execution.
+
+---
+
+### 📋 Step-by-Step Instructions to Fix It:
+1. **Inspect the target location:** Open \`${fileLocation}\` and check the line that triggered the error trace.
+2. **Apply defensive guard / error handling:** Wrap the fragile operation with input validation or a localized \`try/catch\` block.
+3. **Verify outputs in isolation:** Test the function with valid and empty inputs to verify resilience against edge cases.`,
+      patchCode: code ? `// Before:\n${code.split('\n').slice(0, 4).join('\n')}\n\n// After (Defensive Treatment):\ntry {\n  ${code.split('\n').slice(0, 4).join('\n')}\n} catch (err) {\n  console.error("Safely intercepted clinical error:", err);\n}` : `// Recommended Surgical Guard:\ntry {\n  // Wrap the operation from ${fileLocation}\n  executeOperation();\n} catch (err) {\n  console.error("Clinical error handled:", err);\n  // Fallback to safe default state\n}`,
+      prevention: 'Enforce TypeScript strict mode, validate API boundaries, and write unit tests covering unexpected null/undefined inputs.',
       didSearch: verification.didSearch,
-      searchQuery: message.slice(0, 60),
+      searchQuery: errorSignature.slice(0, 50),
       searchResults: verification.results,
       matchedCaseId: null,
-      confidence: 0.82
+      confidence: 0.85
     };
   }
 

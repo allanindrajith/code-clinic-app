@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -6,18 +6,61 @@ import {
   TextInput,
   Pressable,
   ScrollView,
-  ActivityIndicator
+  ActivityIndicator,
+  Platform,
+  useWindowDimensions,
+  KeyboardAvoidingView
 } from 'react-native';
 import { useClinic } from '@/context/ClinicContext';
 import { MascotIcon } from './MascotIcon';
 import { SurgicalDiffView } from './SurgicalDiffView';
+import { AISettingsModal } from './AISettingsModal';
 import { DesignTokens, Spacing } from '@/constants/theme';
 
 interface ConsultationViewProps {
   onOpenSandbox?: () => void;
+  onOpenHistory?: () => void;
 }
 
-export function ConsultationView({ onOpenSandbox }: ConsultationViewProps) {
+const CHAT_PROMPTS = [
+  {
+    title: 'TypeError: undefined reading .map',
+    subtitle: 'Fix uninitialized array state in React / JS',
+    error: `TypeError: Cannot read properties of undefined (reading 'map')
+    at UserList (UserList.jsx:18:14)
+    at renderWithHooks (react-dom.development.js:15486)`,
+    code: `function UserList() {
+  const [users, setUsers] = useState();
+  return <div>{users.map(u => <p key={u.id}>{u.name}</p>)}</div>;
+}`
+  },
+  {
+    title: 'Next.js 15: cookies() await fix',
+    subtitle: 'Resolve async cookies() Promise in Route handler',
+    error: `Error: Route handler cookies() should be awaited in Next.js 15. The \`cookies()\` function now returns a Promise.`,
+    code: `import { cookies } from 'next/headers';
+export async function GET() {
+  const store = cookies();
+  return Response.json({ token: store.get('token')?.value });
+}`
+  },
+  {
+    title: 'CORS: No Access-Control-Allow-Origin',
+    subtitle: 'Fix cross-origin resource sharing blocker',
+    error: `Access to fetch at 'https://api.clinic.dev/data' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`,
+    code: `const res = await fetch('https://api.clinic.dev/data');
+const data = await res.json();`
+  },
+  {
+    title: 'Port in Use: listen EADDRINUSE :3000',
+    subtitle: 'Kill zombie process or configure dynamic port',
+    error: `Error: listen EADDRINUSE: address already in use :::3000
+    at Server.setupListenHandle [as _listen2] (node:net:1898:16)`,
+    code: `// start dev server: npm run dev`
+  }
+];
+
+export function ConsultationView({ onOpenSandbox, onOpenHistory }: ConsultationViewProps) {
   const {
     sessionId,
     messages,
@@ -27,11 +70,85 @@ export function ConsultationView({ onOpenSandbox }: ConsultationViewProps) {
     submitConsultation,
     patientStatus,
     latestDiagnosis,
-    answerClarifyingQuestion
+    answerClarifyingQuestion,
+    aiSettings,
+    newSession
   } = useClinic();
 
+  const { width } = useWindowDimensions();
+  const isCompact = width < 600;
+
+  const [inputText, setInputText] = useState('');
+  const [codeText, setCodeText] = useState('');
+  const [showCodeAttachment, setShowCodeAttachment] = useState(false);
+  const [pasteNotice, setPasteNotice] = useState<string | null>(null);
+  const [showAISettings, setShowAISettings] = useState(false);
   const [clarificationInput, setClarificationInput] = useState('');
-  const [showAdvancedInputs, setShowAdvancedInputs] = useState(false);
+
+  const messageScrollRef = useRef<ScrollView>(null);
+  const inputRef = useRef<TextInput>(null);
+
+  // Auto-scroll to latest message
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      messageScrollRef.current?.scrollToEnd({ animated: true });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [messages.length, patientStatus]);
+
+  const isDiagnosing = patientStatus === 'diagnosing';
+  const hasInput = !!(inputText.trim() || codeText.trim() || draft.error?.trim() || draft.symptom?.trim());
+
+  // Check if conversation only has the initial welcome greeting
+  const isInitialWelcomeOnly = messages.length <= 1;
+
+  const handleSend = () => {
+    const query = inputText.trim() || draft.error || draft.symptom;
+    if (!query && !codeText.trim()) return;
+
+    submitConsultation({
+      error: query,
+      symptom: query.split('\n')[0] || 'Diagnose reported error',
+      code: codeText.trim() || draft.code,
+      expected: 'Expected execution without runtime error.',
+      actual: query
+    });
+
+    setInputText('');
+    setCodeText('');
+    setShowCodeAttachment(false);
+    clearDraft();
+  };
+
+  const handleApplyPrompt = (prompt: typeof CHAT_PROMPTS[0]) => {
+    submitConsultation({
+      error: prompt.error,
+      symptom: prompt.title,
+      code: prompt.code,
+      expected: 'Expected smooth execution without errors.',
+      actual: prompt.error
+    });
+  };
+
+  const handlePasteClipboard = async () => {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim()) {
+          setInputText(prev => (prev ? `${prev}\n${text.trim()}` : text.trim()));
+          setPasteNotice('✓ Error trace pasted');
+          setTimeout(() => setPasteNotice(null), 2000);
+          inputRef.current?.focus();
+          return;
+        }
+      }
+    } catch {
+      // Fallback
+    }
+    setPasteNotice('Press Cmd+V / Ctrl+V in the box');
+    setTimeout(() => setPasteNotice(null), 2500);
+    inputRef.current?.focus();
+  };
 
   const handleClarificationSubmit = () => {
     if (!clarificationInput.trim()) return;
@@ -39,32 +156,107 @@ export function ConsultationView({ onOpenSandbox }: ConsultationViewProps) {
     setClarificationInput('');
   };
 
-  const addQuickChip = (tag: string) => {
-    const current = draft.symptom;
-    const prefix = current ? `${current} [Stack: ${tag}]` : `Stack: ${tag}. Symptom: `;
-    updateDraft({ symptom: prefix });
-  };
-
-  const isDiagnosing = patientStatus === 'diagnosing';
-
   return (
-    <View style={styles.container}>
-      {/* Dialogue Stream */}
-      <View style={styles.dialogueCard}>
-        <View style={styles.cardTopBar}>
-          <View style={styles.roomStatus}>
-            <View style={styles.statusDot} />
-            <Text style={styles.roomTitle}>Examining Room #1</Text>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={styles.chatContainer}
+    >
+      {/* ChatGPT-style Main Card Container */}
+      <View style={styles.chatCard}>
+        {/* Top Session Breadcrumb Bar */}
+        <View style={styles.topSessionBar}>
+          <View style={styles.sessionInfoLeft}>
+            {onOpenHistory && (
+              <Pressable
+                onPress={onOpenHistory}
+                style={styles.historyPillBtn}
+                accessibilityLabel="View previous chats"
+              >
+                <Text style={styles.historyPillIcon}>💬</Text>
+                <Text style={styles.historyPillText}>Previous Chats</Text>
+              </Pressable>
+            )}
+            <View style={styles.sessionBadgePill}>
+              <View style={styles.sessionDot} />
+              <Text style={styles.sessionIdText}>{sessionId}</Text>
+            </View>
           </View>
-          <Text style={styles.sessionIdText}>Patient: {sessionId}</Text>
+
+          <View style={styles.sessionInfoRight}>
+            <Pressable
+              onPress={() => setShowAISettings(true)}
+              style={({ pressed }) => [
+                styles.modelSelectorPill,
+                { opacity: pressed ? 0.7 : 1 }
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Select AI Engine"
+            >
+              <Text style={styles.modelSelectorText}>
+                {aiSettings.provider === 'gemini'
+                  ? '✨ Gemini 2.0 Flash ▾'
+                  : (aiSettings.provider === 'openai' ? '🤖 Agent LLM ▾' : '🩺 Local Engine ▾')}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => newSession()}
+              style={({ pressed }) => [
+                styles.iconBtn,
+                { opacity: pressed ? 0.7 : 1 }
+              ]}
+              accessibilityLabel="Start a new chat"
+            >
+              <Text style={styles.iconBtnText}>＋</Text>
+            </Pressable>
+          </View>
         </View>
 
+        {/* Message Stream */}
         <ScrollView
+          ref={messageScrollRef}
           style={styles.messageScroll}
-          contentContainerStyle={styles.messageList}
+          contentContainerStyle={[
+            styles.messageList,
+            isInitialWelcomeOnly && styles.messageListCentered
+          ]}
+          showsVerticalScrollIndicator={false}
           nestedScrollEnabled
         >
-          {messages.map((msg) => {
+          {/* ChatGPT-style Welcome / Empty State */}
+          {isInitialWelcomeOnly && (
+            <View style={styles.welcomeHero}>
+              <View style={styles.mascotAura}>
+                <MascotIcon size={56} />
+              </View>
+              <Text style={styles.welcomeTitle}>
+                What error are we fixing today?
+              </Text>
+              <Text style={styles.welcomeSubtitle}>
+                Paste any terminal trace, compiler error, or broken component. Dr. Debug diagnoses the root cause and prescribes step-by-step instructions.
+              </Text>
+
+              {/* Prompt Suggestion Cards (ChatGPT mobile style) */}
+              <View style={styles.promptCardsGrid}>
+                {CHAT_PROMPTS.map((p) => (
+                  <Pressable
+                    key={p.title}
+                    onPress={() => handleApplyPrompt(p)}
+                    style={({ pressed }) => [
+                      styles.promptCard,
+                      { opacity: pressed ? 0.75 : 1 }
+                    ]}
+                  >
+                    <Text style={styles.promptCardTitle}>{p.title}</Text>
+                    <Text style={styles.promptCardSubtitle}>{p.subtitle}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* Render Actual Conversation Messages */}
+          {!isInitialWelcomeOnly && messages.map((msg) => {
             const isDoctor = msg.role === 'assistant';
 
             return (
@@ -76,8 +268,8 @@ export function ConsultationView({ onOpenSandbox }: ConsultationViewProps) {
                 ]}
               >
                 {isDoctor && (
-                  <View style={styles.avatarCell}>
-                    <MascotIcon size={30} />
+                  <View style={styles.doctorAvatarBox}>
+                    <MascotIcon size={28} />
                   </View>
                 )}
 
@@ -88,31 +280,54 @@ export function ConsultationView({ onOpenSandbox }: ConsultationViewProps) {
                   ]}
                 >
                   <View style={styles.bubbleHeader}>
-                    <Text style={[styles.speakerName, { color: DesignTokens.colors.ink }]}>
-                      {isDoctor ? 'Dr. Debug' : 'You (Patient)'}
+                    <Text style={[styles.speakerName, { color: isDoctor ? DesignTokens.colors.ink : '#ffffff' }]}>
+                      {isDoctor ? 'Dr. Debug' : 'You'}
                     </Text>
-                    <Text style={styles.timestamp}>
+                    <Text style={[styles.timestamp, { color: isDoctor ? DesignTokens.colors.mute : 'rgba(255,255,255,0.7)' }]}>
                       {msg.timestamp}
                     </Text>
                   </View>
 
-                  <Text style={styles.bubbleContent}>
-                    {msg.content}
-                  </Text>
+                  {/* Message Content */}
+                  <View style={styles.contentContainer}>
+                    {msg.content.split('\n\n').map((paragraph, pIdx) => {
+                      if (paragraph.startsWith('### ')) {
+                        return (
+                          <Text
+                            key={pIdx}
+                            style={[styles.sectionHeader, { color: isDoctor ? DesignTokens.colors.ink : '#ffffff' }]}
+                          >
+                            {paragraph.replace('### ', '')}
+                          </Text>
+                        );
+                      }
+                      if (paragraph.startsWith('---')) {
+                        return <View key={pIdx} style={styles.contentDivider} />;
+                      }
+                      return (
+                        <Text
+                          key={pIdx}
+                          style={[styles.bubbleParagraph, { color: isDoctor ? DesignTokens.colors.ink : '#ffffff' }]}
+                        >
+                          {paragraph}
+                        </Text>
+                      );
+                    })}
+                  </View>
 
-                  {/* Reported code block */}
+                  {/* Attached Code Snippet if sent by user */}
                   {msg.code ? (
                     <View style={styles.snippetBlock}>
-                      <Text style={styles.snippetLabel}>Reported Code:</Text>
+                      <Text style={styles.snippetLabel}>Attached Code:</Text>
                       <Text style={styles.snippetText} numberOfLines={8}>{msg.code}</Text>
                     </View>
                   ) : null}
 
-                  {/* Reported error trace */}
-                  {msg.error ? (
+                  {/* Attached Error Trace if sent by user */}
+                  {msg.error && msg.error !== msg.content ? (
                     <View style={styles.errorBlock}>
-                      <Text style={styles.errorLabel}>Reported Trace:</Text>
-                      <Text style={styles.errorText} numberOfLines={4}>{msg.error}</Text>
+                      <Text style={styles.errorLabel}>Error Log / Trace:</Text>
+                      <Text style={styles.errorText} numberOfLines={6}>{msg.error}</Text>
                     </View>
                   ) : null}
 
@@ -130,218 +345,368 @@ export function ConsultationView({ onOpenSandbox }: ConsultationViewProps) {
             );
           })}
 
+          {/* Typing/Diagnosing Indicator */}
           {isDiagnosing && (
             <View style={styles.diagnosingRow}>
-              <ActivityIndicator color={DesignTokens.colors.ink} size="small" />
-              <Text style={styles.diagnosingText}>
-                Dr. Debug is checking documentation and synthesizing prescription...
-              </Text>
+              <View style={styles.doctorAvatarBox}>
+                <MascotIcon size={24} />
+              </View>
+              <View style={styles.diagnosingBubble}>
+                <ActivityIndicator color={DesignTokens.colors.primary} size="small" />
+                <Text style={styles.diagnosingText}>
+                  Dr. Debug is diagnosing and preparing step-by-step instructions...
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Clarifying Question Modal Box */}
+          {latestDiagnosis?.phase === 'intake' && latestDiagnosis.clarifyingQuestion && (
+            <View style={styles.clarifyBox}>
+              <Text style={styles.clarifyTitle}>🩺 Clarifying Question from Dr. Debug:</Text>
+              <Text style={styles.clarifyText}>{latestDiagnosis.clarifyingQuestion}</Text>
+              <View style={styles.clarifyInputRow}>
+                <TextInput
+                  value={clarificationInput}
+                  onChangeText={setClarificationInput}
+                  placeholder="Answer Dr. Debug's question..."
+                  placeholderTextColor={DesignTokens.colors.mute}
+                  style={styles.clarifyInput}
+                />
+                <Pressable
+                  onPress={handleClarificationSubmit}
+                  style={({ pressed }) => [
+                    styles.clarifySubmitBtn,
+                    { backgroundColor: pressed ? DesignTokens.colors.inkDeep : DesignTokens.colors.primary }
+                  ]}
+                >
+                  <Text style={styles.clarifySubmitText}>Send</Text>
+                </Pressable>
+              </View>
             </View>
           )}
         </ScrollView>
 
-        {/* Clarifying question box */}
-        {latestDiagnosis?.phase === 'intake' && latestDiagnosis.clarifyingQuestion && (
-          <View style={styles.clarifyBox}>
-            <Text style={styles.clarifyTitle}>
-              🩺 Dr. Debug Follow-up Question:
-            </Text>
-            <Text style={styles.clarifyText}>
-              {latestDiagnosis.clarifyingQuestion}
-            </Text>
-            <View style={styles.clarifyInputRow}>
-              <TextInput
-                value={clarificationInput}
-                onChangeText={setClarificationInput}
-                placeholder="Type your response or paste error..."
-                placeholderTextColor={DesignTokens.colors.mute}
-                style={styles.clarifyInput}
-              />
-              <Pressable
-                onPress={handleClarificationSubmit}
-                style={({ pressed }) => [
-                  styles.clarifySubmitBtn,
-                  { backgroundColor: pressed ? DesignTokens.colors.inkDeep : DesignTokens.colors.primary }
-                ]}
-              >
-                <Text style={styles.clarifySubmitText}>Submit</Text>
-              </Pressable>
+        {/* ChatGPT Mobile Floating Bottom Composer */}
+        <View style={styles.floatingComposerArea}>
+          {/* Paste notice badge */}
+          {pasteNotice && (
+            <View style={styles.pasteNoticeBadge}>
+              <Text style={styles.pasteNoticeText}>{pasteNotice}</Text>
             </View>
-          </View>
-        )}
-      </View>
+          )}
 
-      {/* Intake Prescription & Input Form */}
-      <View style={styles.formCard}>
-        <View style={styles.formHeader}>
-          <Text style={styles.formTitle}>Clinical Intake</Text>
-          <Pressable
-            onPress={() => setShowAdvancedInputs(!showAdvancedInputs)}
-            style={({ pressed }) => [styles.toggleAdvancedBtn, { opacity: pressed ? 0.7 : 1 }]}
-          >
-            <Text style={styles.toggleAdvancedText}>
-              {showAdvancedInputs ? '− Less details' : '+ Add code & error trace'}
-            </Text>
-          </Pressable>
-        </View>
+          {/* Quick accessory chips above input */}
+          <View style={styles.composerAccessoryRow}>
+            <Pressable
+              onPress={handlePasteClipboard}
+              style={({ pressed }) => [
+                styles.accessoryChip,
+                { opacity: pressed ? 0.7 : 1 }
+              ]}
+              accessibilityRole="button"
+            >
+              <Text style={styles.accessoryChipText}>📋 Paste Clipboard</Text>
+            </Pressable>
 
-        {/* Primary Symptom */}
-        <View style={styles.fieldGroup}>
-          <Text style={styles.fieldLabel}>
-            Symptom Description / What Happened:
-          </Text>
-          <TextInput
-            multiline
-            numberOfLines={2}
-            value={draft.symptom}
-            onChangeText={(txt) => updateDraft({ symptom: txt })}
-            placeholder="e.g. Component fails to render after clicking fetch, or route handler throws async error..."
-            placeholderTextColor={DesignTokens.colors.mute}
-            style={styles.textarea}
-          />
-        </View>
-
-        {/* Advanced Stack trace & Code Snippet inputs */}
-        {showAdvancedInputs && (
-          <View style={styles.advancedGrid}>
-            <View style={styles.fieldGroup}>
-              <Text style={styles.fieldLabel}>
-                Exact Error / Stack Trace (Optional):
+            <Pressable
+              onPress={() => setShowCodeAttachment(!showCodeAttachment)}
+              style={({ pressed }) => [
+                styles.accessoryChip,
+                showCodeAttachment && styles.accessoryChipActive,
+                { opacity: pressed ? 0.7 : 1 }
+              ]}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.accessoryChipText, showCodeAttachment && styles.accessoryChipTextActive]}>
+                {showCodeAttachment ? '✕ Hide Code' : '+ Attach Code'}
               </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setShowAISettings(true)}
+              style={({ pressed }) => [
+                styles.accessoryChip,
+                { opacity: pressed ? 0.7 : 1 }
+              ]}
+              accessibilityRole="button"
+            >
+              <Text style={styles.accessoryChipText}>
+                {aiSettings.provider === 'gemini' ? '✨ Gemini (Free)' : '🩺 Local'}
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* Collapsible Code Attachment Box */}
+          {showCodeAttachment && (
+            <View style={styles.codeAttachmentBox}>
+              <View style={styles.codeAttachmentHeader}>
+                <Text style={styles.codeAttachmentLabel}>Attached Code Snippet:</Text>
+                <Pressable onPress={() => setShowCodeAttachment(false)}>
+                  <Text style={styles.codeCloseText}>✕</Text>
+                </Pressable>
+              </View>
               <TextInput
                 multiline
                 numberOfLines={3}
-                value={draft.error}
-                onChangeText={(txt) => updateDraft({ error: txt })}
-                placeholder="TypeError: Cannot read properties of undefined..."
+                value={codeText}
+                onChangeText={setCodeText}
+                placeholder="// Paste broken code snippet here..."
                 placeholderTextColor={DesignTokens.colors.mute}
-                style={styles.monospaceInput}
+                style={styles.codeAttachmentInput}
+                textAlignVertical="top"
               />
             </View>
+          )}
 
-            <View style={styles.fieldGroup}>
-              <Text style={styles.fieldLabel}>
-                Relevant Code Block (Optional):
-              </Text>
-              <TextInput
-                multiline
-                numberOfLines={4}
-                value={draft.code}
-                onChangeText={(txt) => updateDraft({ code: txt })}
-                placeholder="// Paste function or block&#10;export async function GET() { ... }"
-                placeholderTextColor={DesignTokens.colors.mute}
-                style={styles.monospaceInput}
-              />
-            </View>
-          </View>
-        )}
-
-        {/* Command tags & Submit bar */}
-        <View style={styles.bottomBar}>
-          <View style={styles.chipsRow}>
-            <Text style={styles.chipsPrefix}>Stack:</Text>
-            {['React', 'Next.js 15', 'Python', 'Docker'].map((tag) => (
-              <Pressable
-                key={tag}
-                onPress={() => addQuickChip(tag)}
-                style={({ pressed }) => [
-                  styles.chipPill,
-                  { opacity: pressed ? 0.7 : 1 }
-                ]}
-              >
-                <Text style={styles.chipPillText}>{tag}</Text>
-              </Pressable>
-            ))}
-          </View>
-
-          <View style={styles.formActions}>
+          {/* Main ChatGPT Pill Input Bar */}
+          <View style={styles.inputPillContainer}>
             <Pressable
-              onPress={clearDraft}
-              style={({ pressed }) => [
-                styles.clearButton,
-                { opacity: pressed ? 0.7 : 1 }
-              ]}
+              onPress={() => setShowCodeAttachment(!showCodeAttachment)}
+              style={styles.attachmentButton}
+              accessibilityLabel="Attach code snippet"
             >
-              <Text style={styles.clearButtonText}>Clear</Text>
+              <Text style={styles.attachmentButtonIcon}>📎</Text>
             </Pressable>
 
-            <Pressable
-              onPress={() => submitConsultation()}
-              disabled={isDiagnosing || (!draft.symptom && !draft.error && !draft.code)}
-              style={({ pressed }) => [
-                styles.submitButton,
-                {
-                  backgroundColor: pressed ? DesignTokens.colors.inkDeep : DesignTokens.colors.primary,
-                  opacity: (!draft.symptom && !draft.error && !draft.code) ? 0.4 : 1
+            <TextInput
+              ref={inputRef}
+              multiline
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder="Message Dr. Debug or paste error trace..."
+              placeholderTextColor={DesignTokens.colors.mute}
+              style={styles.mainTextInput}
+              onSubmitEditing={(e) => {
+                if (Platform.OS === 'web' && !(e.nativeEvent as any).shiftKey) {
+                  handleSend();
                 }
+              }}
+            />
+
+            <Pressable
+              onPress={handleSend}
+              disabled={!hasInput || isDiagnosing}
+              style={({ pressed }) => [
+                styles.sendCircleBtn,
+                hasInput && !isDiagnosing ? styles.sendCircleBtnActive : styles.sendCircleBtnDisabled,
+                { opacity: pressed ? 0.75 : 1 }
               ]}
+              accessibilityRole="button"
+              accessibilityLabel="Send error"
             >
-              <Text style={styles.submitButtonText}>
-                {isDiagnosing ? 'Diagnosing...' : 'Consult Dr. Debug'}
-              </Text>
+              {isDiagnosing ? (
+                <ActivityIndicator color="#ffffff" size="small" />
+              ) : (
+                <Text style={[styles.sendArrowText, hasInput && styles.sendArrowTextActive]}>
+                  ↑
+                </Text>
+              )}
             </Pressable>
           </View>
+
+          <Text style={styles.disclaimerText}>
+            Dr. Debug provides clinical diagnostic fixes. Double-check production patches.
+          </Text>
         </View>
       </View>
-    </View>
+
+      <AISettingsModal
+        visible={showAISettings}
+        onClose={() => setShowAISettings(false)}
+      />
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    gap: Spacing.four,
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.six,
+  chatContainer: {
+    width: '100%',
+    paddingHorizontal: Spacing.three,
+    paddingBottom: Spacing.four,
   },
-  dialogueCard: {
-    backgroundColor: DesignTokens.colors.surfaceCard,
+  chatCard: {
+    backgroundColor: DesignTokens.colors.canvas,
     borderRadius: DesignTokens.rounded.lg,
     borderWidth: 1,
     borderColor: DesignTokens.colors.hairline,
+    display: 'flex',
+    flexDirection: 'column',
     overflow: 'hidden',
+    minHeight: 560,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
-  cardTopBar: {
+  topSessionBar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two + 4,
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: DesignTokens.colors.hairline,
-    backgroundColor: DesignTokens.colors.surfaceCard,
+    backgroundColor: DesignTokens.colors.surfaceSoft,
   },
-  roomStatus: {
+  sessionInfoLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  statusDot: {
-    width: 8,
-    height: 8,
+  historyPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
     borderRadius: DesignTokens.rounded.full,
-    backgroundColor: DesignTokens.colors.terminalGreen,
+    backgroundColor: DesignTokens.colors.canvas,
+    borderWidth: 1,
+    borderColor: DesignTokens.colors.hairlineStrong,
   },
-  roomTitle: {
-    fontSize: 14,
+  historyPillIcon: {
+    fontSize: 12,
+  },
+  historyPillText: {
+    fontSize: 11.5,
     fontWeight: '600',
     color: DesignTokens.colors.ink,
   },
+  sessionBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: DesignTokens.rounded.full,
+    backgroundColor: DesignTokens.colors.canvas,
+    borderWidth: 1,
+    borderColor: DesignTokens.colors.hairline,
+  },
+  sessionDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: DesignTokens.colors.terminalGreen,
+  },
   sessionIdText: {
-    fontSize: 12,
-    fontFamily: 'monospace',
-    fontWeight: '400',
-    color: DesignTokens.colors.body,
+    fontSize: 11,
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    fontWeight: '500',
+    color: DesignTokens.colors.charcoal,
+  },
+  sessionInfoRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  modelSelectorPill: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: DesignTokens.rounded.full,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  modelSelectorText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#1d4ed8',
+  },
+  iconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: DesignTokens.rounded.full,
+    backgroundColor: DesignTokens.colors.canvas,
+    borderWidth: 1,
+    borderColor: DesignTokens.colors.hairlineStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: DesignTokens.colors.ink,
+    lineHeight: 16,
   },
   messageScroll: {
-    maxHeight: 520,
+    flex: 1,
+    minHeight: 380,
+    maxHeight: 650,
   },
   messageList: {
     padding: Spacing.four,
     gap: Spacing.three,
   },
+  messageListCentered: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  welcomeHero: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.four,
+    maxWidth: 580,
+    alignSelf: 'center',
+    width: '100%',
+    gap: 12,
+  },
+  mascotAura: {
+    width: 72,
+    height: 72,
+    borderRadius: DesignTokens.rounded.full,
+    backgroundColor: DesignTokens.colors.surfaceSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  welcomeTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: DesignTokens.colors.ink,
+    textAlign: 'center',
+    letterSpacing: -0.4,
+  },
+  welcomeSubtitle: {
+    fontSize: 13.5,
+    lineHeight: 20,
+    color: DesignTokens.colors.body,
+    textAlign: 'center',
+    maxWidth: 480,
+  },
+  promptCardsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: Spacing.two,
+    width: '100%',
+  },
+  promptCard: {
+    flex: 1,
+    minWidth: '47%',
+    padding: 12,
+    borderRadius: DesignTokens.rounded.md,
+    borderWidth: 1,
+    borderColor: DesignTokens.colors.hairlineStrong,
+    backgroundColor: DesignTokens.colors.surfaceSoft,
+    gap: 4,
+  },
+  promptCardTitle: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: DesignTokens.colors.ink,
+  },
+  promptCardSubtitle: {
+    fontSize: 11,
+    color: DesignTokens.colors.mute,
+    lineHeight: 15,
+  },
   messageRow: {
     flexDirection: 'row',
     gap: Spacing.two,
+    width: '100%',
   },
   doctorRow: {
     justifyContent: 'flex-start',
@@ -349,15 +714,17 @@ const styles = StyleSheet.create({
   userRow: {
     justifyContent: 'flex-end',
   },
-  avatarCell: {
-    width: 32,
+  doctorAvatarBox: {
+    width: 30,
+    height: 30,
     alignItems: 'center',
-    paddingTop: 2,
+    justifyContent: 'center',
+    marginTop: 2,
   },
   messageBubble: {
-    maxWidth: '92%',
+    maxWidth: '88%',
     borderRadius: DesignTokens.rounded.lg,
-    padding: Spacing.three,
+    padding: Spacing.three + 2,
     gap: Spacing.two,
     borderWidth: 1,
   },
@@ -366,8 +733,8 @@ const styles = StyleSheet.create({
     borderColor: DesignTokens.colors.hairline,
   },
   userBubble: {
-    backgroundColor: DesignTokens.colors.canvas,
-    borderColor: DesignTokens.colors.hairlineStrong,
+    backgroundColor: DesignTokens.colors.primary,
+    borderColor: DesignTokens.colors.primary,
     alignSelf: 'flex-end',
   },
   bubbleHeader: {
@@ -377,17 +744,29 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   speakerName: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '600',
   },
   timestamp: {
-    fontSize: 11,
-    color: DesignTokens.colors.mute,
+    fontSize: 10.5,
   },
-  bubbleContent: {
-    fontSize: 14,
-    lineHeight: 22,
-    color: DesignTokens.colors.ink,
+  contentContainer: {
+    gap: 6,
+  },
+  sectionHeader: {
+    fontSize: 14.5,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+    marginTop: 4,
+  },
+  contentDivider: {
+    height: 1,
+    backgroundColor: DesignTokens.colors.hairline,
+    marginVertical: 4,
+  },
+  bubbleParagraph: {
+    fontSize: 13.5,
+    lineHeight: 20,
   },
   snippetBlock: {
     padding: Spacing.two + 2,
@@ -397,65 +776,75 @@ const styles = StyleSheet.create({
   },
   snippetLabel: {
     color: DesignTokens.colors.mute,
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '500',
     marginBottom: 4,
   },
   snippetText: {
     color: DesignTokens.colors.onDark,
-    fontSize: 12,
-    fontFamily: 'monospace',
-    lineHeight: 18,
+    fontSize: 11.5,
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    lineHeight: 17,
   },
   errorBlock: {
     padding: Spacing.two + 2,
     borderRadius: DesignTokens.rounded.sm,
     borderWidth: 1,
     borderColor: DesignTokens.colors.hairline,
-    backgroundColor: DesignTokens.colors.surfaceSoft,
+    backgroundColor: '#fff5f5',
     marginTop: 4,
   },
   errorLabel: {
     color: DesignTokens.colors.terminalRed,
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 10.5,
+    fontWeight: '700',
     marginBottom: 2,
   },
   errorText: {
-    color: DesignTokens.colors.ink,
-    fontSize: 12,
-    fontFamily: 'monospace',
-    lineHeight: 18,
+    color: '#991b1b',
+    fontSize: 11.5,
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    lineHeight: 17,
   },
   diagnosingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
-    paddingVertical: Spacing.two,
-    justifyContent: 'center',
+    paddingVertical: 8,
+  },
+  diagnosingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: DesignTokens.colors.surfaceSoft,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: DesignTokens.rounded.full,
+    borderWidth: 1,
+    borderColor: DesignTokens.colors.hairline,
   },
   diagnosingText: {
-    fontSize: 13,
-    fontWeight: '400',
-    color: DesignTokens.colors.body,
+    fontSize: 12,
+    color: DesignTokens.colors.charcoal,
+    fontWeight: '500',
   },
   clarifyBox: {
-    margin: Spacing.three,
+    marginVertical: Spacing.two,
     padding: Spacing.three,
-    borderRadius: DesignTokens.rounded.lg,
+    borderRadius: DesignTokens.rounded.md,
     borderWidth: 1,
     borderColor: DesignTokens.colors.hairline,
     backgroundColor: DesignTokens.colors.surfaceSoft,
     gap: Spacing.two,
   },
   clarifyTitle: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '600',
     color: DesignTokens.colors.ink,
   },
   clarifyText: {
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 12.5,
+    lineHeight: 18,
     color: DesignTokens.colors.charcoal,
   },
   clarifyInputRow: {
@@ -465,152 +854,156 @@ const styles = StyleSheet.create({
   clarifyInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: DesignTokens.colors.hairline,
+    borderColor: DesignTokens.colors.hairlineStrong,
     backgroundColor: DesignTokens.colors.canvas,
     borderRadius: DesignTokens.rounded.full,
-    paddingHorizontal: 16,
-    paddingVertical: 7,
-    fontSize: 13,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    fontSize: 12.5,
     color: DesignTokens.colors.ink,
   },
   clarifySubmitBtn: {
-    backgroundColor: DesignTokens.colors.primary,
     borderRadius: DesignTokens.rounded.full,
-    paddingHorizontal: 16,
-    height: 36,
+    paddingHorizontal: 14,
+    height: 32,
     justifyContent: 'center',
     alignItems: 'center',
   },
   clarifySubmitText: {
-    color: DesignTokens.colors.onPrimary,
-    fontSize: 13,
-    fontWeight: '500',
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
   },
-  formCard: {
-    borderRadius: DesignTokens.rounded.lg,
+  floatingComposerArea: {
+    borderTopWidth: 1,
+    borderTopColor: DesignTokens.colors.hairline,
+    backgroundColor: DesignTokens.colors.canvas,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  pasteNoticeBadge: {
+    backgroundColor: '#f0fdf4',
     borderWidth: 1,
-    borderColor: DesignTokens.colors.hairline,
-    backgroundColor: DesignTokens.colors.surfaceCard,
-    padding: Spacing.four,
-    gap: Spacing.three,
+    borderColor: '#bbf7d0',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: DesignTokens.rounded.md,
+    alignSelf: 'flex-start',
   },
-  formHeader: {
+  pasteNoticeText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#166534',
+  },
+  composerAccessoryRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 6,
     alignItems: 'center',
   },
-  formTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: DesignTokens.colors.ink,
-    letterSpacing: -0.2,
-  },
-  toggleAdvancedBtn: {
+  accessoryChip: {
+    paddingHorizontal: 10,
     paddingVertical: 4,
+    borderRadius: DesignTokens.rounded.full,
+    backgroundColor: DesignTokens.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: DesignTokens.colors.hairline,
   },
-  toggleAdvancedText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: DesignTokens.colors.body,
+  accessoryChipActive: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#93c5fd',
   },
-  fieldGroup: {
-    gap: 6,
-  },
-  fieldLabel: {
-    fontSize: 13,
+  accessoryChipText: {
+    fontSize: 11,
     fontWeight: '500',
     color: DesignTokens.colors.charcoal,
   },
-  textarea: {
-    borderWidth: 1,
-    borderColor: DesignTokens.colors.hairline,
+  accessoryChipTextActive: {
+    color: '#1d4ed8',
+    fontWeight: '600',
+  },
+  codeAttachmentBox: {
     backgroundColor: DesignTokens.colors.surfaceSoft,
     borderRadius: DesignTokens.rounded.md,
-    padding: Spacing.three,
-    fontSize: 14,
-    color: DesignTokens.colors.ink,
-    lineHeight: 20,
-    minHeight: 64,
-  },
-  advancedGrid: {
-    gap: Spacing.three,
-  },
-  monospaceInput: {
-    borderWidth: 1,
-    borderColor: DesignTokens.colors.hairline,
-    backgroundColor: DesignTokens.colors.surfaceSoft,
-    borderRadius: DesignTokens.rounded.md,
-    padding: Spacing.three,
-    fontSize: 12,
-    fontFamily: 'monospace',
-    color: DesignTokens.colors.ink,
-    lineHeight: 18,
-  },
-  bottomBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: Spacing.two,
-    paddingTop: 6,
-  },
-  chipsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexWrap: 'wrap',
-  },
-  chipsPrefix: {
-    fontSize: 13,
-    color: DesignTokens.colors.mute,
-    fontWeight: '500',
-    marginRight: 2,
-  },
-  chipPill: {
-    backgroundColor: DesignTokens.colors.surfaceSoft,
-    borderWidth: 1,
-    borderColor: DesignTokens.colors.hairline,
-    borderRadius: DesignTokens.rounded.full,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-  },
-  chipPillText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: DesignTokens.colors.ink,
-  },
-  formActions: {
-    flexDirection: 'row',
-    gap: Spacing.two,
-    alignItems: 'center',
-    marginLeft: 'auto',
-  },
-  clearButton: {
-    backgroundColor: DesignTokens.colors.canvas,
     borderWidth: 1,
     borderColor: DesignTokens.colors.hairlineStrong,
-    borderRadius: DesignTokens.rounded.full,
-    paddingHorizontal: 16,
-    height: 36,
-    justifyContent: 'center',
+    padding: 8,
+    gap: 4,
+  },
+  codeAttachmentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
   },
-  clearButtonText: {
-    fontSize: 13,
-    fontWeight: '500',
+  codeAttachmentLabel: {
+    fontSize: 11,
+    fontWeight: '600',
     color: DesignTokens.colors.charcoal,
   },
-  submitButton: {
-    backgroundColor: DesignTokens.colors.primary,
-    borderRadius: DesignTokens.rounded.full,
-    paddingHorizontal: 20,
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
+  codeCloseText: {
+    fontSize: 12,
+    color: DesignTokens.colors.mute,
+    padding: 2,
   },
-  submitButtonText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: DesignTokens.colors.onPrimary,
+  codeAttachmentInput: {
+    fontSize: 12,
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    color: DesignTokens.colors.ink,
+    minHeight: 56,
+  },
+  inputPillContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: DesignTokens.colors.surfaceSoft,
+    borderRadius: DesignTokens.rounded.full,
+    borderWidth: 1,
+    borderColor: DesignTokens.colors.hairlineStrong,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    gap: 6,
+  },
+  attachmentButton: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachmentButtonIcon: {
+    fontSize: 16,
+    color: DesignTokens.colors.mute,
+  },
+  mainTextInput: {
+    flex: 1,
+    fontSize: 13.5,
+    color: DesignTokens.colors.ink,
+    paddingVertical: 6,
+    maxHeight: 100,
+  },
+  sendCircleBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendCircleBtnActive: {
+    backgroundColor: DesignTokens.colors.primary,
+  },
+  sendCircleBtnDisabled: {
+    backgroundColor: DesignTokens.colors.hairlineStrong,
+  },
+  sendArrowText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: DesignTokens.colors.mute,
+    lineHeight: 18,
+  },
+  sendArrowTextActive: {
+    color: '#ffffff',
+  },
+  disclaimerText: {
+    fontSize: 10.5,
+    color: DesignTokens.colors.mute,
+    textAlign: 'center',
   },
 });
