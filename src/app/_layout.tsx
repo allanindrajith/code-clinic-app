@@ -15,7 +15,7 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={DefaultTheme}>
-      <StatusBar style="dark" backgroundColor="#ffffff" />
+      <StatusBar style="dark" />
       <ClinicProvider>
         <Tabs
           screenOptions={{
