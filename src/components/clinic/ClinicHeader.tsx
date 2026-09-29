@@ -97,8 +97,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingVertical: 12,
     width: '100%',
+    alignItems: 'center',
   },
   topRow: {
+    maxWidth: 1200,
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',

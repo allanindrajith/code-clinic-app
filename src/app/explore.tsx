@@ -87,7 +87,7 @@ const styles = StyleSheet.create({
   },
   pageHeader: {
     width: '100%',
-    maxWidth: MaxContentWidth + 240,
+    maxWidth: 1200,
     paddingHorizontal: Spacing.four,
     paddingTop: Spacing.four,
     paddingBottom: Spacing.two,
@@ -106,7 +106,7 @@ const styles = StyleSheet.create({
   },
   gridContainer: {
     width: '100%',
-    maxWidth: MaxContentWidth + 240,
+    maxWidth: 1200,
     paddingHorizontal: Spacing.four,
     marginTop: Spacing.three,
   },

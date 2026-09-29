@@ -194,9 +194,9 @@ const styles = StyleSheet.create({
   },
   gridContainer: {
     width: '100%',
-    maxWidth: MaxContentWidth + 240,
-    paddingHorizontal: Spacing.two,
-    marginTop: Spacing.two,
+    maxWidth: 1200,
+    paddingHorizontal: Spacing.four,
+    marginTop: Spacing.three,
   },
   desktopGrid: {
     flexDirection: 'row',

@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View, Text, Pressable, ScrollView } from 'react-native';
+import { StyleSheet, View, Text, Pressable, ScrollView, useWindowDimensions } from 'react-native';
 import { useClinic } from '@/context/ClinicContext';
 import { TriageTemplate } from '@/services/clinicEngine';
 import { DesignTokens, Spacing } from '@/constants/theme';
@@ -10,6 +10,8 @@ interface TriageCaseCarouselProps {
 
 export function TriageCaseCarousel({ onSelectCase }: TriageCaseCarouselProps) {
   const { triageTemplates, activeTriageId, loadTriageCase } = useClinic();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 1150;
 
   const handlePickCase = (template: TriageTemplate) => {
     loadTriageCase(template.id);
@@ -32,7 +34,7 @@ export function TriageCaseCarousel({ onSelectCase }: TriageCaseCarouselProps) {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.scrollList}
+        contentContainerStyle={[styles.scrollList, isDesktop && styles.desktopScrollList]}
       >
         {triageTemplates.map((item) => {
           const isActive = activeTriageId === item.id;
@@ -94,6 +96,8 @@ const styles = StyleSheet.create({
   container: {
     paddingVertical: Spacing.two,
     width: '100%',
+    maxWidth: 1200,
+    alignSelf: 'center',
   },
   header: {
     paddingHorizontal: Spacing.four,
@@ -120,6 +124,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     gap: Spacing.three,
     paddingVertical: Spacing.two,
+  },
+  desktopScrollList: {
+    justifyContent: 'center',
+    flexGrow: 1,
   },
   caseCard: {
     width: 260,

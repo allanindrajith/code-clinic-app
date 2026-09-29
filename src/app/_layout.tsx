@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { DefaultTheme, ThemeProvider, Tabs } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { Text, StyleSheet, Platform } from 'react-native';
+import { Text, StyleSheet, Platform, useWindowDimensions } from 'react-native';
 
 import { ClinicProvider } from '@/context/ClinicContext';
 
@@ -10,6 +10,9 @@ import { ClinicProvider } from '@/context/ClinicContext';
 SplashScreen.hideAsync().catch(() => {});
 
 export default function RootLayout() {
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 768;
+
   return (
     <ThemeProvider value={DefaultTheme}>
       <StatusBar style="dark" backgroundColor="#ffffff" />
@@ -18,8 +21,26 @@ export default function RootLayout() {
           screenOptions={{
             headerShown: false,
             tabBarActiveTintColor: '#000000',
-            tabBarInactiveTintColor: '#a3a3a3',
-            tabBarStyle: {
+            tabBarInactiveTintColor: '#737373',
+            tabBarStyle: isDesktop ? {
+              position: 'absolute',
+              bottom: 24,
+              left: '50%',
+              transform: [{ translateX: -190 }],
+              width: 380,
+              backgroundColor: '#ffffff',
+              borderRadius: 9999,
+              borderWidth: 1,
+              borderColor: '#e5e5e5',
+              boxShadow: '0 8px 30px rgba(0, 0, 0, 0.10)',
+              height: 54,
+              paddingBottom: 0,
+              paddingTop: 0,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 999,
+            } : {
               backgroundColor: '#ffffff',
               borderTopColor: '#e5e5e5',
               borderTopWidth: 1,
@@ -28,10 +49,16 @@ export default function RootLayout() {
               paddingTop: 8,
               elevation: 0,
             },
+            tabBarItemStyle: isDesktop ? {
+              height: 54,
+              justifyContent: 'center',
+              alignItems: 'center',
+              paddingVertical: 4,
+            } : undefined,
             tabBarLabelStyle: {
               fontSize: 11,
               fontWeight: '600',
-              marginTop: 2,
+              marginTop: isDesktop ? 0 : 2,
             },
           }}
         >
