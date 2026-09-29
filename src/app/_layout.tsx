@@ -23,14 +23,15 @@ export default function RootLayout() {
               backgroundColor: '#ffffff',
               borderTopColor: '#e5e5e5',
               borderTopWidth: 1,
-              height: Platform.OS === 'ios' ? 84 : 60,
-              paddingBottom: Platform.OS === 'ios' ? 24 : 8,
+              height: Platform.OS === 'ios' ? 84 : 76,
+              paddingBottom: Platform.OS === 'ios' ? 24 : 18,
               paddingTop: 8,
               elevation: 0,
             },
             tabBarLabelStyle: {
-              fontSize: 12,
-              fontWeight: '500',
+              fontSize: 11,
+              fontWeight: '600',
+              marginTop: 2,
             },
           }}
         >

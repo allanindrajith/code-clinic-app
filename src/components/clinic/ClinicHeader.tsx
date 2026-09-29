@@ -42,7 +42,7 @@ export function ClinicHeader({ onToggleChart, showChartButton = true }: ClinicHe
     <View style={styles.headerContainer}>
       <View style={styles.topRow}>
         <View style={styles.brandGroup}>
-          <MascotIcon size={32} />
+          <MascotIcon size={34} />
           <View style={styles.titleColumn}>
             <View style={styles.brandTitleRow}>
               <Text style={styles.brandTitle}>Code Clinic</Text>
@@ -95,7 +95,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: DesignTokens.colors.hairline,
     paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two + 4,
+    paddingVertical: 12,
     width: '100%',
   },
   topRow: {
@@ -103,12 +103,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     flexWrap: 'wrap',
-    gap: Spacing.two,
+    rowGap: 10,
+    columnGap: 12,
   },
   brandGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.two + 2,
+    gap: 10,
   },
   titleColumn: {
     justifyContent: 'center',
@@ -119,7 +120,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   brandTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '600',
     color: DesignTokens.colors.ink,
     letterSpacing: -0.2,
@@ -128,20 +129,20 @@ const styles = StyleSheet.create({
     backgroundColor: DesignTokens.colors.surfaceSoft,
     borderWidth: 1,
     borderColor: DesignTokens.colors.hairline,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingHorizontal: 7,
+    paddingVertical: 1.5,
     borderRadius: DesignTokens.rounded.full,
   },
   badgeText: {
-    fontSize: 11,
-    fontWeight: '500',
+    fontSize: 10,
+    fontWeight: '600',
     color: DesignTokens.colors.body,
   },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: 2,
+    marginTop: 1,
   },
   pulseDot: {
     width: 7,
@@ -149,26 +150,30 @@ const styles = StyleSheet.create({
     borderRadius: DesignTokens.rounded.full,
   },
   statusText: {
-    fontSize: 12,
-    fontWeight: '400',
+    fontSize: 11,
+    fontWeight: '500',
     color: DesignTokens.colors.body,
   },
   actionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.two,
+    gap: 8,
+    flexWrap: 'wrap',
   },
   sessionBadge: {
     backgroundColor: DesignTokens.colors.surfaceSoft,
     borderWidth: 1,
     borderColor: DesignTokens.colors.hairline,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: DesignTokens.rounded.full,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   sessionText: {
-    fontSize: 12,
-    fontWeight: '500',
+    fontSize: 11,
+    fontWeight: '600',
     fontFamily: 'monospace',
     color: DesignTokens.colors.charcoal,
   },
@@ -176,30 +181,29 @@ const styles = StyleSheet.create({
     backgroundColor: DesignTokens.colors.canvas,
     borderWidth: 1,
     borderColor: DesignTokens.colors.hairlineStrong,
-    paddingHorizontal: 16,
-    paddingVertical: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 5,
     borderRadius: DesignTokens.rounded.full,
-    height: 36,
+    height: 32,
     justifyContent: 'center',
     alignItems: 'center',
   },
   chartButtonText: {
-    fontSize: 13,
-    fontWeight: '500',
+    fontSize: 12,
+    fontWeight: '600',
     color: DesignTokens.colors.ink,
   },
   newPatientButton: {
-    backgroundColor: DesignTokens.colors.primary,
-    paddingHorizontal: 18,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 5,
     borderRadius: DesignTokens.rounded.full,
-    height: 36,
+    height: 32,
     justifyContent: 'center',
     alignItems: 'center',
   },
   newPatientText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: DesignTokens.colors.onPrimary,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ffffff',
   },
 });

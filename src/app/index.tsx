@@ -21,6 +21,7 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const [showChartModal, setShowChartModal] = useState(false);
   const isDesktop = width >= 860;
+  const isMobile = width < 600;
 
   return (
     <View style={styles.rootContainer}>
@@ -36,10 +37,10 @@ export default function HomeScreen() {
           {/* Documentation-First Center Hero Section */}
           <View style={styles.heroSection}>
             <View style={styles.mascotContainer}>
-              <MascotIcon size={84} />
+              <MascotIcon size={80} />
             </View>
 
-            <Text style={styles.heroTitle}>
+            <Text style={[styles.heroTitle, isMobile && styles.mobileHeroTitle]}>
               The easiest way to diagnose and cure broken code
             </Text>
 
@@ -49,10 +50,12 @@ export default function HomeScreen() {
 
             {/* Signature Install Snippet Pill */}
             <View style={styles.installSnippetPill}>
-              <Text style={styles.commandPrompt}>$</Text>
-              <Text style={styles.commandText}>
-                curl -fsSL https://codeclinic.dev/cure.sh | sh
-              </Text>
+              <View style={styles.commandRow}>
+                <Text style={styles.commandPrompt}>$</Text>
+                <Text style={styles.commandText}>
+                  curl -fsSL https://codeclinic.dev/cure.sh | sh
+                </Text>
+              </View>
               <Pressable
                 onPress={() => router.push('/explore')}
                 style={({ pressed }) => [
@@ -103,56 +106,68 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     alignItems: 'center',
-    paddingBottom: BottomTabInset + Spacing.six + 20,
+    paddingBottom: BottomTabInset + Spacing.six + 40,
   },
   heroSection: {
     alignItems: 'center',
     maxWidth: MaxContentWidth,
     paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.five,
-    paddingBottom: Spacing.four,
-    gap: Spacing.two + 4,
+    paddingTop: Spacing.four,
+    paddingBottom: Spacing.three,
+    gap: Spacing.two + 2,
     textAlign: 'center',
+    width: '100%',
   },
   mascotContainer: {
-    width: 96,
-    height: 96,
+    width: 88,
+    height: 88,
     borderRadius: DesignTokens.rounded.full,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 2,
+    marginBottom: 4,
+    backgroundColor: '#00000005',
   },
   heroTitle: {
     fontSize: 34,
-    fontWeight: '500',
+    fontWeight: '700',
     textAlign: 'center',
-    letterSpacing: -0.4,
+    letterSpacing: -0.6,
     lineHeight: 40,
     color: DesignTokens.colors.ink,
   },
+  mobileHeroTitle: {
+    fontSize: 25,
+    lineHeight: 31,
+    letterSpacing: -0.3,
+  },
   heroSubtitle: {
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 15,
+    lineHeight: 22,
     textAlign: 'center',
     color: DesignTokens.colors.body,
-    maxWidth: 620,
+    maxWidth: 580,
     fontWeight: '400',
   },
   installSnippetPill: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: DesignTokens.colors.surfaceSoft,
     borderColor: DesignTokens.colors.hairline,
     borderWidth: 1,
     borderRadius: DesignTokens.rounded.full,
     paddingLeft: Spacing.three,
-    paddingRight: Spacing.one + 2,
+    paddingRight: 6,
     paddingVertical: 6,
     gap: Spacing.two,
     marginTop: Spacing.two,
     maxWidth: '100%',
     flexWrap: 'wrap',
-    justifyContent: 'center',
+  },
+  commandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   commandPrompt: {
     color: DesignTokens.colors.mute,
@@ -161,21 +176,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   commandText: {
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: 'monospace',
     fontWeight: '400',
     color: DesignTokens.colors.ink,
   },
   labJumpBtn: {
     backgroundColor: DesignTokens.colors.primary,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: DesignTokens.rounded.full,
-    marginLeft: 4,
   },
   labJumpText: {
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: '600',
     color: DesignTokens.colors.onPrimary,
   },
   gridContainer: {
